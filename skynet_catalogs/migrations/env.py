@@ -1,0 +1,95 @@
+"""Alembic environment for the catalog database.
+
+* Target metadata is **only** ``CatalogBase.metadata`` — never ``skynet_db``'s.
+* The URL is resolved from ``SKYNET_CATALOG_DB_*`` (admin/owner role) unless
+  overridden with ``-x url=...`` / ``SKYNET_CATALOG_ALEMBIC_URL``.
+* Refuses to run against the primary ``sky`` database.
+* The Alembic version table lives in the ``catalog_registry`` schema; the three
+  catalog schemas are ensured to exist before migrations run so a fresh database
+  bootstraps cleanly.
+"""
+
+from __future__ import annotations
+
+import os
+from logging.config import fileConfig
+
+from alembic import context
+from sqlalchemy import create_engine, text
+
+from skynet_catalogs.config import CatalogConfigError, CatalogDatabaseConfig, load_settings
+from skynet_catalogs.constants import ALL_SCHEMAS, CatalogRole
+from skynet_catalogs.database.base import CatalogBase
+from skynet_catalogs.constants import SCHEMA_REGISTRY
+
+# Import the models so every table is attached to the metadata.
+import skynet_catalogs.models  # noqa: F401
+
+config = context.config
+if config.config_file_name is not None:
+    try:
+        fileConfig(config.config_file_name)
+    except Exception:  # pragma: no cover - logging is best-effort
+        pass
+
+target_metadata = CatalogBase.metadata
+
+
+def _resolve_url() -> str:
+    x_args = context.get_x_argument(as_dictionary=True)
+    url = (
+        x_args.get("url")
+        or os.environ.get("SKYNET_CATALOG_ALEMBIC_URL")
+        or config.get_main_option("sqlalchemy.url")
+    )
+    if url:
+        # Guard a directly-supplied URL too.
+        name = url.rsplit("/", 1)[-1].split("?", 1)[0]
+        CatalogDatabaseConfig(name=name).assert_not_primary_database()
+        return url
+    settings = load_settings()
+    cfg = settings.config_for(CatalogRole.ADMIN)
+    cfg.assert_not_primary_database()
+    return cfg.url()
+
+
+def _ensure_schemas(connection) -> None:
+    for schema in ALL_SCHEMAS:
+        connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+
+
+def run_migrations_offline() -> None:
+    url = _resolve_url()
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+        version_table_schema=SCHEMA_REGISTRY,
+        include_schemas=True,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    url = _resolve_url()
+    engine = create_engine(url, pool_pre_ping=True)
+    with engine.connect() as connection:
+        _ensure_schemas(connection)
+        connection.commit()
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            version_table_schema=SCHEMA_REGISTRY,
+            include_schemas=True,
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+    engine.dispose()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()

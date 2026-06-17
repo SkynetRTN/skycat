@@ -1,0 +1,37 @@
+# Never commit catalog datasets, staging, or import artifacts. Source data lives
+# under SKYNET_CATALOG_DATA_ROOT (e.g. /srv/agents/catalogs), never in-tree.
+# Generated artifacts live under SKYNET_CATALOG_WORK_ROOT.
+
+# Local catalog data / staging / generated artifacts
+catalog-data/
+catalog-work/
+work/
+staging/
+manifests/
+rejected/
+checkpoints/
+*.manifest.json
+
+# PostgreSQL dumps + bulk export intermediates
+*.dump
+*.sql.gz
+*.copy
+*.bin
+
+# Local dev env files
+.env
+.env.secrets
+
+# Python build/test
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+__pycache__/
+.coverage
+
+# Catalog source datasets accidentally placed under tests/data (only the small
+# committed fixtures *_sample.* are allowed).
+tests/data/*.zip
+tests/data/*.dat
+!tests/data/vsx_sample.dat

@@ -1,0 +1,47 @@
+[project]
+name = "skynet-catalogs"
+version = "0.1.0"
+description = "Standalone PostgreSQL/PostGIS store for large local astronomical reference catalogs (APASS, VSX, …), independent from skynet-db and the primary `sky` database."
+readme = "README.md"
+requires-python = ">=3.11, <3.14"
+authors = [
+    { name = "Skynet RTN" },
+]
+dependencies = [
+    "sqlalchemy ~= 2.0.38",
+    "geoalchemy2 ~= 0.20.0",
+    "psycopg[binary] ~= 3.2.4",
+    "alembic ~= 1.14",
+    "click ~= 8.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest >= 8.0",
+]
+
+[project.scripts]
+# Single entry point for every catalog operation (init, migrate, discover,
+# register, import, validate, activate, query, crossmatch, health …).
+skynet-catalogs = "skynet_catalogs.cli.main:main_entry"
+
+[tool.uv.sources]
+# skynet-catalogs is deliberately NOT coupled to skynet-db; it has no in-tree
+# path dependency. (Declared here for symmetry with the other packages should a
+# generic shared utility ever be extracted.)
+
+[tool.pytest.ini_options]
+markers = [
+    "postgis: integration tests that require a live PostgreSQL/PostGIS catalog database (skipped unless SKYNET_CATALOG_TEST_DSN or a reachable catalog DB is configured).",
+]
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["skynet_catalogs"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
