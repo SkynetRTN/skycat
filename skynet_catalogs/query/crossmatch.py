@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from psycopg.types.json import Jsonb  # noqa: F401  (parity with loader adapters)
-from sqlalchemy import text
+from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from ..config import CatalogRole, CatalogSettings
@@ -39,16 +39,22 @@ def batch_crossmatch(
     nearest_only: bool = True,
     max_candidates: int = 1,
     role: CatalogRole = CatalogRole.READER,
+    engine: Engine | None = None,
 ) -> list[dict]:
     """Crossmatch ``inputs`` (``(input_id, ra_deg, dec_deg)``) against a release.
 
     Returns one dict per (input, candidate); inputs with no match within
     ``radius_deg`` yield a single ``matched=False`` row. Ordering is
     deterministic: by ``input_id`` then ascending separation.
+
+    Pass ``engine`` to reuse a caller-managed (pooled) engine; it is left open.
+    When omitted, a short-lived engine is created and disposed here.
     """
-    cfg = settings.config_for(role)
-    cfg.assert_not_primary_database()
-    engine = create_catalog_engine(cfg, pool_size=1, max_overflow=1)
+    own_engine = engine is None
+    if engine is None:
+        cfg = settings.config_for(role)
+        cfg.assert_not_primary_database()
+        engine = create_catalog_engine(cfg, pool_size=1, max_overflow=1)
     limit = 1 if nearest_only else max(1, max_candidates)
     radius_m = degrees_to_meters(radius_deg)
     try:
@@ -103,4 +109,5 @@ def batch_crossmatch(
             ).mappings()
             return [dict(row) for row in rows]
     finally:
-        engine.dispose()
+        if own_engine:
+            engine.dispose()

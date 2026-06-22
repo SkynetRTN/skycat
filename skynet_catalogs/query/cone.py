@@ -139,10 +139,18 @@ def lookup_native_id(
     release: str | None = None,
     limit: int = 100,
     role: CatalogRole = CatalogRole.READER,
+    engine: Engine | None = None,
 ) -> list[dict]:
-    cfg = settings.config_for(role)
-    cfg.assert_not_primary_database()
-    engine = create_catalog_engine(cfg, pool_size=1, max_overflow=1)
+    """Return rows whose ``native_id`` matches, for the resolved release.
+
+    Pass ``engine`` to reuse a caller-managed (pooled) engine; it is left open.
+    When omitted, a short-lived engine is created and disposed here.
+    """
+    own_engine = engine is None
+    if engine is None:
+        cfg = settings.config_for(role)
+        cfg.assert_not_primary_database()
+        engine = create_catalog_engine(cfg, pool_size=1, max_overflow=1)
     try:
         with Session(engine) as session:
             resolved = resolve_release_for_query(session, family_slug, release)
@@ -157,7 +165,8 @@ def lookup_native_id(
         with engine.connect() as conn:
             return [dict(row) for row in conn.execute(stmt).mappings()]
     finally:
-        engine.dispose()
+        if own_engine:
+            engine.dispose()
 
 
 def cone_search_plan(

@@ -296,3 +296,19 @@ Alembic as the owner role; an ingestion Job imports an explicit family+release a
 the ingest role. Neither drops the database nor runs on ordinary app startup.
 See `infra/kubernetes/deploy/base/jobs/catalog-*.yaml` and the Ansible
 `postgres_server` role's catalog tenant tasks.
+
+---
+
+## Consumers
+
+The Skynet **optical pipeline** consumes this package as the *local-first*
+backend for its catalog providers (APASS, VSX): cone searches, native-id lookup,
+and batch crossmatch are served from here via the read-only `catalog_reader`
+role, falling back to remote VizieR when the local store is unavailable or a
+catalog isn't imported locally. The integration lives behind the existing
+provider interface (no PostGIS/SQLAlchemy leaks into the pipeline) — see
+`packages/py/skynet-db/.../optical_data_processing/catalogs/local/README.md`
+for backend-selection modes (`SKYNET_CATALOG_BACKEND`), field mappings, and
+failure/health behaviour. The query API it uses (`cone_search`,
+`lookup_native_id`, `batch_crossmatch`) accepts an optional caller-managed
+`engine=` so a long-lived worker reuses one pooled connection.
