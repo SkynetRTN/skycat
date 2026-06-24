@@ -26,4 +26,7 @@ spec:
                 name: skynet-shared-config
             - secretRef:
                 name: skynet-runtime-secrets
+            # Privileged catalog creds (bootstrap/admin/ingest) — Job-only.
+            - secretRef:
+                name: skynet-catalog-admin-secrets
           args: ["migrate"]
