@@ -1,6 +1,6 @@
 # Never commit catalog datasets, staging, or import artifacts. Source data lives
-# under SKYNET_CATALOG_DATA_ROOT (e.g. /srv/agents/catalogs), never in-tree.
-# Generated artifacts live under SKYNET_CATALOG_WORK_ROOT.
+# under SKYCAT_DATA_ROOT (e.g. /srv/agents/catalogs), never in-tree.
+# Generated artifacts live under SKYCAT_WORK_ROOT.
 
 # Local catalog data / staging / generated artifacts
 catalog-data/

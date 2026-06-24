@@ -1,7 +1,7 @@
 [project]
-name = "skynet-catalogs"
+name = "skycat"
 version = "0.1.0"
-description = "Standalone PostgreSQL/PostGIS store for large local astronomical reference catalogs (APASS, VSX, …), independent from skynet-db and the primary `sky` database."
+description = "Skycat: standalone PostgreSQL/PostGIS store for large local astronomical reference catalogs (APASS, VSX, …), independent from skynet-db and the primary `sky` database."
 readme = "README.md"
 requires-python = ">=3.11, <3.14"
 authors = [
@@ -23,21 +23,21 @@ dev = [
 [project.scripts]
 # Single entry point for every catalog operation (init, migrate, discover,
 # register, import, validate, activate, query, crossmatch, health …).
-skynet-catalogs = "skynet_catalogs.cli.main:main_entry"
+skycat = "skycat.cli.main:main_entry"
 
 [tool.uv.sources]
-# skynet-catalogs is deliberately NOT coupled to skynet-db; it has no in-tree
+# skycat is deliberately NOT coupled to skynet-db; it has no in-tree
 # path dependency. (Declared here for symmetry with the other packages should a
 # generic shared utility ever be extracted.)
 
 [tool.pytest.ini_options]
 markers = [
-    "postgis: integration tests that require a live PostgreSQL/PostGIS catalog database (skipped unless SKYNET_CATALOG_TEST_DSN or a reachable catalog DB is configured).",
+    "postgis: integration tests that require a live PostgreSQL/PostGIS catalog database (skipped unless SKYCAT_TEST_DSN or a reachable catalog DB is configured).",
 ]
 testpaths = ["tests"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["skynet_catalogs"]
+packages = ["skycat"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

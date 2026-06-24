@@ -7,14 +7,14 @@ import sys
 
 def test_importing_catalogs_does_not_import_skynet_db():
     # Importing the whole package (incl. models) must not pull in skynet_db.
-    import skynet_catalogs  # noqa: F401
-    import skynet_catalogs.models  # noqa: F401
+    import skycat  # noqa: F401
+    import skycat.models  # noqa: F401
 
     assert "skynet_db" not in sys.modules
 
 
 def test_separate_metadata_and_base():
-    from skynet_catalogs.database.base import CatalogBase, catalog_metadata
+    from skycat.database.base import CatalogBase, catalog_metadata
 
     assert CatalogBase.metadata is catalog_metadata
     # No skynet_db Base in the MRO / module graph.
@@ -22,7 +22,7 @@ def test_separate_metadata_and_base():
 
 
 def test_all_tables_live_in_catalog_schemas():
-    from skynet_catalogs.database.base import CatalogBase
+    from skycat.database.base import CatalogBase
 
     schemas = {t.schema for t in CatalogBase.metadata.tables.values()}
     assert schemas == {"catalog_registry", "catalog_data"}
@@ -35,7 +35,7 @@ def test_all_tables_live_in_catalog_schemas():
 
 def test_no_catalog_object_model_reused():
     # We define our own ApassSource/VsxSource — not skynet_db's CatalogObject.
-    from skynet_catalogs import models
+    from skycat import models
 
     assert hasattr(models, "ApassSource")
     assert hasattr(models, "VsxSource")

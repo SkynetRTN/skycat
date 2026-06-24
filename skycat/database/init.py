@@ -24,7 +24,7 @@ from ..constants import (
     ROLE_READER,
 )
 from .engine import create_catalog_engine, fetch_current_database
-from .migrate import current_revision, script_heads, upgrade
+from .migrate import current_revision, upgrade
 from .postgis import enable_postgis, verify_postgis
 from .roles import (
     apply_existing_object_grants,
@@ -155,7 +155,9 @@ def reset_catalog_database(
                 f"Refusing destructive reset against database {current_db!r}."
             )
         with engine.begin() as conn:
-            for schema in (ALL_SCHEMAS):  # registry last would orphan FKs; CASCADE handles order
+            for (
+                schema
+            ) in ALL_SCHEMAS:  # registry last would orphan FKs; CASCADE handles order
                 conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
     finally:
         engine.dispose()

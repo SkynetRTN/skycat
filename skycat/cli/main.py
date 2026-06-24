@@ -1,4 +1,4 @@
-"""``skynet-catalogs`` command-line interface.
+"""Skycat command-line interface (``skycat``).
 
 One entry point for every catalog operation. Every destructive command is
 explicit (``--force`` and, for production-like targets, ``--allow-production``).
@@ -38,7 +38,13 @@ from ..registry import (
     sync_all_families,
 )
 from ..registry.catalog_defs import get_family_def
-from ..query import batch_crossmatch, cone_search, cone_search_plan, lookup_native_id, radius_to_deg
+from ..query import (
+    batch_crossmatch,
+    cone_search,
+    cone_search_plan,
+    lookup_native_id,
+    radius_to_deg,
+)
 
 
 def _emit(ctx, data, human: str) -> None:
@@ -64,7 +70,7 @@ def _session(settings, role: CatalogRole):
 @click.option("--json", "json_out", is_flag=True, help="Machine-readable JSON output.")
 @click.pass_context
 def main(ctx: click.Context, json_out: bool) -> None:
-    """Manage the standalone Skynet catalog database (APASS, VSX, …)."""
+    """Manage the standalone Skycat database (APASS, VSX, …)."""
     ctx.ensure_object(dict)
     ctx.obj["json"] = json_out
     ctx.obj["settings"] = load_settings()
@@ -78,7 +84,9 @@ def config(ctx):
     s = ctx.obj["settings"]
     data = {
         "url": s.base.safe_url(),
-        "host": s.base.host, "port": s.base.port, "database": s.base.name,
+        "host": s.base.host,
+        "port": s.base.port,
+        "database": s.base.name,
         "default_user": s.default_user,
         "roles": {
             "bootstrap": s.bootstrap_user or "(falls back)",
@@ -86,7 +94,8 @@ def config(ctx):
             "ingest": s.ingest_user or "(falls back)",
             "reader": s.reader_user or "(falls back)",
         },
-        "data_root": s.data_root, "work_root": s.work_root,
+        "data_root": s.data_root,
+        "work_root": s.work_root,
     }
     _emit(ctx, data, jsonlib.dumps(data, indent=2))
 
@@ -97,11 +106,19 @@ def config(ctx):
 def init(ctx):
     """Enable PostGIS, create roles/grants/schemas, and apply migrations."""
     res = initialize_catalog_database(ctx.obj["settings"])
-    data = {"database": res.database, "postgis": res.postgis_version,
-            "roles": list(res.roles_ensured), "schemas": list(res.schemas),
-            "migrated_to": res.migrated_to}
-    _emit(ctx, data, f"initialized {res.database}: postgis {res.postgis_version}, "
-                     f"migrated to {res.migrated_to}")
+    data = {
+        "database": res.database,
+        "postgis": res.postgis_version,
+        "roles": list(res.roles_ensured),
+        "schemas": list(res.schemas),
+        "migrated_to": res.migrated_to,
+    }
+    _emit(
+        ctx,
+        data,
+        f"initialized {res.database}: postgis {res.postgis_version}, "
+        f"migrated to {res.migrated_to}",
+    )
 
 
 @main.command()
@@ -122,18 +139,26 @@ def migrate_status(ctx):
     cfg = ctx.obj["settings"].config_for(CatalogRole.ADMIN)
     cur = current_revision(cfg)
     heads = script_heads(cfg)
-    data = {"current": cur, "heads": heads, "up_to_date": cur in set(heads) if cur else False}
+    data = {
+        "current": cur,
+        "heads": heads,
+        "up_to_date": cur in set(heads) if cur else False,
+    }
     _emit(ctx, data, f"current={cur} heads={heads} up_to_date={data['up_to_date']}")
 
 
 @main.command()
-@click.option("--family", default=None, help="Also check a specific family's active release.")
+@click.option(
+    "--family", default=None, help="Also check a specific family's active release."
+)
 @click.pass_context
 def health(ctx, family):
     """Comprehensive (read-only) health report."""
     report = health_report(ctx.obj["settings"], family=family)
     lines = [f"target: {report.target}", f"healthy: {report.healthy}"]
-    lines += [f"  [{'ok' if c.ok else 'FAIL'}] {c.name}: {c.detail}" for c in report.checks]
+    lines += [
+        f"  [{'ok' if c.ok else 'FAIL'}] {c.name}: {c.detail}" for c in report.checks
+    ]
     _emit(ctx, report.to_dict(), "\n".join(lines))
     if not report.healthy:
         ctx.exit(1)
@@ -146,9 +171,20 @@ def families(ctx):
     """List registered catalog families."""
     with _session(ctx.obj["settings"], CatalogRole.READER) as session:
         fams = list_families(session)
-        data = [{"slug": f.slug, "display_name": f.display_name, "type": f.catalog_type,
-                 "enabled": f.enabled, "data_table": f.data_table} for f in fams]
-    human = "\n".join(f"{d['slug']:12} {d['display_name']} ({d['type']})" for d in data) or "(none)"
+        data = [
+            {
+                "slug": f.slug,
+                "display_name": f.display_name,
+                "type": f.catalog_type,
+                "enabled": f.enabled,
+                "data_table": f.data_table,
+            }
+            for f in fams
+        ]
+    human = (
+        "\n".join(f"{d['slug']:12} {d['display_name']} ({d['type']})" for d in data)
+        or "(none)"
+    )
     _emit(ctx, data, human)
 
 
@@ -188,12 +224,22 @@ def discover(ctx, family, release, source_dir):
         found = [discover_one(s.data_root, family, release, explicit_dir=source_dir)]
     else:
         found = discover_all(s.data_root)
-    data = [{"family": d.family.slug, "release": d.release.slug, "present": d.present,
-             "source_dir": str(d.source_dir), "files": d.file_count,
-             "bytes": d.total_bytes, "issues": d.issues} for d in found]
+    data = [
+        {
+            "family": d.family.slug,
+            "release": d.release.slug,
+            "present": d.present,
+            "source_dir": str(d.source_dir),
+            "files": d.file_count,
+            "bytes": d.total_bytes,
+            "issues": d.issues,
+        }
+        for d in found
+    ]
     human = "\n".join(
         f"{d['family']}/{d['release']:8} present={d['present']} files={d['files']} "
-        f"bytes={d['bytes']} {d['source_dir']} {d['issues'] or ''}" for d in data
+        f"bytes={d['bytes']} {d['source_dir']} {d['issues'] or ''}"
+        for d in data
     )
     _emit(ctx, data, human)
 
@@ -211,10 +257,21 @@ def register_release_cmd(ctx, family, release):
     with _session(ctx.obj["settings"], CatalogRole.INGEST) as session:
         fam = register_family(session, family)
         session.commit()
-        rel = get_or_create_release(session, fam, name=rel_def.name, version=rel_def.version)
+        rel = get_or_create_release(
+            session, fam, name=rel_def.name, version=rel_def.version
+        )
         session.commit()
-        data = {"family": family, "release": rel.name, "state": str(rel.state), "id": rel.id}
-    _emit(ctx, data, f"registered release {family}/{data['release']} (state={data['state']})")
+        data = {
+            "family": family,
+            "release": rel.name,
+            "state": str(rel.state),
+            "id": rel.id,
+        }
+    _emit(
+        ctx,
+        data,
+        f"registered release {family}/{data['release']} (state={data['state']})",
+    )
 
 
 # --------------------------------------------------------------------- import
@@ -222,31 +279,59 @@ def register_release_cmd(ctx, family, release):
 @click.argument("family")
 @click.argument("release")
 @click.option("--activate", is_flag=True, help="Activate after a clean import.")
-@click.option("--allow-warnings", is_flag=True, help="Activate even with non-critical warnings.")
+@click.option(
+    "--allow-warnings", is_flag=True, help="Activate even with non-critical warnings."
+)
 @click.option("--replace", is_flag=True, help="Re-import an existing release.")
-@click.option("--force", is_flag=True, help="Required with --replace for an ACTIVE release.")
+@click.option(
+    "--force", is_flag=True, help="Required with --replace for an ACTIVE release."
+)
 @click.option("--source-dir", default=None)
-@click.option("--content-checksum", is_flag=True, help="Full content hash (slow) vs manifest hash.")
-@click.option("--keep-staging", is_flag=True, help="Retain staging tables after success.")
+@click.option(
+    "--content-checksum",
+    is_flag=True,
+    help="Full content hash (slow) vs manifest hash.",
+)
+@click.option(
+    "--keep-staging", is_flag=True, help="Retain staging tables after success."
+)
 @click.pass_context
-def import_cmd(ctx, family, release, activate, allow_warnings, replace, force,
-               source_dir, content_checksum, keep_staging):
+def import_cmd(
+    ctx,
+    family,
+    release,
+    activate,
+    allow_warnings,
+    replace,
+    force,
+    source_dir,
+    content_checksum,
+    keep_staging,
+):
     """Import (and optionally activate) a catalog release."""
     s = ctx.obj["settings"]
     ingest = s.config_for(CatalogRole.INGEST)
     # Safety: report the target + source before loading anything.
     click.echo(
         f"importing {family}/{release} -> {ingest.target_summary()} "
-        f"(source: {s.data_root})", err=True,
+        f"(source: {s.data_root})",
+        err=True,
     )
 
     def progress(n):
         click.echo(f"  loaded {n:,} rows…", err=True)
 
     report = import_release(
-        s, family, release, activate=activate, allow_warnings=allow_warnings,
-        explicit_dir=source_dir, replace=replace, force=force,
-        content_checksum=content_checksum, keep_staging=keep_staging,
+        s,
+        family,
+        release,
+        activate=activate,
+        allow_warnings=allow_warnings,
+        explicit_dir=source_dir,
+        replace=replace,
+        force=force,
+        content_checksum=content_checksum,
+        keep_staging=keep_staging,
         on_progress=progress,
     )
     data = report.__dict__
@@ -314,13 +399,25 @@ def releases(ctx, family):
     """List releases (optionally for one family)."""
     with _session(ctx.obj["settings"], CatalogRole.READER) as session:
         rels = list_releases(session, family)
-        data = [{"family": r.family.slug, "release": r.name, "state": str(r.state),
-                 "validation": str(r.validation_status), "rows": r.imported_row_count,
-                 "table": r.production_table} for r in rels]
-    human = "\n".join(
-        f"{d['family']:8} {d['release']:10} {d['state']:11} val={d['validation']:20} "
-        f"rows={d['rows']} {d['table'] or ''}" for d in data
-    ) or "(none)"
+        data = [
+            {
+                "family": r.family.slug,
+                "release": r.name,
+                "state": str(r.state),
+                "validation": str(r.validation_status),
+                "rows": r.imported_row_count,
+                "table": r.production_table,
+            }
+            for r in rels
+        ]
+    human = (
+        "\n".join(
+            f"{d['family']:8} {d['release']:10} {d['state']:11} val={d['validation']:20} "
+            f"rows={d['rows']} {d['table'] or ''}"
+            for d in data
+        )
+        or "(none)"
+    )
     _emit(ctx, data, human)
 
 
@@ -331,23 +428,38 @@ def history(ctx, family):
     """Show ingestion-run history."""
     from ..models.registry import CatalogFamily, CatalogRelease, IngestionRun
     from sqlalchemy import select
+
     with _session(ctx.obj["settings"], CatalogRole.READER) as session:
-        stmt = (select(IngestionRun, CatalogRelease, CatalogFamily)
-                .join(CatalogRelease, IngestionRun.release_id == CatalogRelease.id)
-                .join(CatalogFamily, CatalogRelease.family_id == CatalogFamily.id)
-                .order_by(IngestionRun.started_at.desc()))
+        stmt = (
+            select(IngestionRun, CatalogRelease, CatalogFamily)
+            .join(CatalogRelease, IngestionRun.release_id == CatalogRelease.id)
+            .join(CatalogFamily, CatalogRelease.family_id == CatalogFamily.id)
+            .order_by(IngestionRun.started_at.desc())
+        )
         if family:
             stmt = stmt.where(CatalogFamily.slug == family.lower())
         data = []
         for run, rel, fam in session.execute(stmt).all():
-            data.append({"family": fam.slug, "release": rel.name, "status": str(run.status),
-                         "stage": run.stage, "loaded": run.loaded_row_count,
-                         "rejected": run.rejected_row_count,
-                         "started": run.started_at, "finished": run.finished_at})
-    human = "\n".join(
-        f"{d['family']:8} {d['release']:10} {d['status']:10} loaded={d['loaded']} "
-        f"rejected={d['rejected']} {d['started']}" for d in data
-    ) or "(none)"
+            data.append(
+                {
+                    "family": fam.slug,
+                    "release": rel.name,
+                    "status": str(run.status),
+                    "stage": run.stage,
+                    "loaded": run.loaded_row_count,
+                    "rejected": run.rejected_row_count,
+                    "started": run.started_at,
+                    "finished": run.finished_at,
+                }
+            )
+    human = (
+        "\n".join(
+            f"{d['family']:8} {d['release']:10} {d['status']:10} loaded={d['loaded']} "
+            f"rejected={d['rejected']} {d['started']}"
+            for d in data
+        )
+        or "(none)"
+    )
     _emit(ctx, data, human)
 
 
@@ -361,25 +473,55 @@ def history(ctx, family):
 @click.option("--radius-arcsec", type=float, default=None)
 @click.option("--release", default=None, help="Explicit release (default: active).")
 @click.option("--limit", type=int, default=50)
-@click.option("--mag-band", default=None, help="Magnitude column to filter, e.g. johnson_v_mag.")
+@click.option(
+    "--mag-band", default=None, help="Magnitude column to filter, e.g. johnson_v_mag."
+)
 @click.option("--mag-min", type=float, default=None)
 @click.option("--mag-max", type=float, default=None)
-@click.option("--explain", is_flag=True, help="Show the query plan (proves index usage).")
+@click.option(
+    "--explain", is_flag=True, help="Show the query plan (proves index usage)."
+)
 @click.pass_context
-def cone(ctx, family, ra, dec, radius_deg, radius_arcmin, radius_arcsec, release,
-         limit, mag_band, mag_min, mag_max, explain):
+def cone(
+    ctx,
+    family,
+    ra,
+    dec,
+    radius_deg,
+    radius_arcmin,
+    radius_arcsec,
+    release,
+    limit,
+    mag_band,
+    mag_min,
+    mag_max,
+    explain,
+):
     """Cone search a catalog family."""
     s = ctx.obj["settings"]
-    rdeg = radius_to_deg(radius_deg=radius_deg, radius_arcmin=radius_arcmin, radius_arcsec=radius_arcsec)
+    rdeg = radius_to_deg(
+        radius_deg=radius_deg, radius_arcmin=radius_arcmin, radius_arcsec=radius_arcsec
+    )
     if explain:
         plan = cone_search_plan(s, family, ra, dec, radius_deg=rdeg, release=release)
         _emit(ctx, {"plan": plan}, plan)
         return
-    rows = cone_search(s, family, ra, dec, radius_deg=rdeg, release=release, limit=limit,
-                       mag_band=mag_band, mag_min=mag_min, mag_max=mag_max)
+    rows = cone_search(
+        s,
+        family,
+        ra,
+        dec,
+        radius_deg=rdeg,
+        release=release,
+        limit=limit,
+        mag_band=mag_band,
+        mag_min=mag_min,
+        mag_max=mag_max,
+    )
     human = f"{len(rows)} matches\n" + "\n".join(
         f"  {r.get('native_id'):20} ra={r['ra_deg']:.6f} dec={r['dec_deg']:.6f} "
-        f"sep={r['separation_deg']*3600:.2f}\"" for r in rows
+        f'sep={r["separation_deg"] * 3600:.2f}"'
+        for r in rows
     )
     _emit(ctx, rows, human)
 
@@ -393,7 +535,8 @@ def lookup(ctx, family, native_id, release):
     """Look up rows by native source identifier."""
     rows = lookup_native_id(ctx.obj["settings"], family, native_id, release=release)
     human = f"{len(rows)} rows\n" + "\n".join(
-        f"  {r.get('native_id')} ra={r['ra_deg']:.6f} dec={r['dec_deg']:.6f}" for r in rows
+        f"  {r.get('native_id')} ra={r['ra_deg']:.6f} dec={r['dec_deg']:.6f}"
+        for r in rows
     )
     _emit(ctx, rows, human)
 
@@ -403,10 +546,14 @@ def lookup(ctx, family, native_id, release):
 @click.argument("input_csv", type=click.Path(exists=True))
 @click.option("--radius-arcsec", type=float, default=5.0)
 @click.option("--release", default=None)
-@click.option("--all-candidates", is_flag=True, help="Return all candidates (not just nearest).")
+@click.option(
+    "--all-candidates", is_flag=True, help="Return all candidates (not just nearest)."
+)
 @click.option("--max-candidates", type=int, default=5)
 @click.pass_context
-def crossmatch(ctx, family, input_csv, radius_arcsec, release, all_candidates, max_candidates):
+def crossmatch(
+    ctx, family, input_csv, radius_arcsec, release, all_candidates, max_candidates
+):
     """Batch crossmatch a CSV of `id,ra,dec` against a release."""
     inputs = []
     with open(input_csv, newline="") as fh:
@@ -416,12 +563,21 @@ def crossmatch(ctx, family, input_csv, radius_arcsec, release, all_candidates, m
                 continue
             inputs.append((row[0], float(row[1]), float(row[2])))
     rows = batch_crossmatch(
-        ctx.obj["settings"], family, inputs, radius_deg=radius_arcsec / 3600.0,
-        release=release, nearest_only=not all_candidates, max_candidates=max_candidates,
+        ctx.obj["settings"],
+        family,
+        inputs,
+        radius_deg=radius_arcsec / 3600.0,
+        release=release,
+        nearest_only=not all_candidates,
+        max_candidates=max_candidates,
     )
     human = "\n".join(
         f"  {r['input_id']:12} -> "
-        + (f"{r.get('native_id')} sep={r['separation_deg']*3600:.2f}\"" if r["matched"] else "(no match)")
+        + (
+            f'{r.get("native_id")} sep={r["separation_deg"] * 3600:.2f}"'
+            if r["matched"]
+            else "(no match)"
+        )
         for r in rows
     )
     _emit(ctx, rows, human)
@@ -434,8 +590,9 @@ def sizes(ctx):
     """Report table + index sizes."""
     rows = table_sizes(ctx.obj["settings"])
     human = "\n".join(
-        f"  {r['schema']}.{r['table']:24} total={r['total_bytes']/1e6:.1f}MB "
-        f"idx={r['index_bytes']/1e6:.1f}MB rows~{r['approx_rows']}" for r in rows
+        f"  {r['schema']}.{r['table']:24} total={r['total_bytes'] / 1e6:.1f}MB "
+        f"idx={r['index_bytes'] / 1e6:.1f}MB rows~{r['approx_rows']}"
+        for r in rows
     )
     _emit(ctx, rows, human)
 
@@ -460,12 +617,18 @@ def remove_release_cmd(ctx, family, release, force):
 
 
 @main.command()
-@click.option("--force", is_flag=True, help="Required — destructive (explicit confirmation).")
-@click.option("--allow-production", is_flag=True, help="Override production-like guard.")
+@click.option(
+    "--force", is_flag=True, help="Required — destructive (explicit confirmation)."
+)
+@click.option(
+    "--allow-production", is_flag=True, help="Override production-like guard."
+)
 @click.pass_context
 def reset(ctx, force, allow_production):
     """DESTRUCTIVE (dev only): drop the catalog schemas. Never drops the DB/volume/source."""
-    reset_catalog_database(ctx.obj["settings"], force=force, allow_production=allow_production)
+    reset_catalog_database(
+        ctx.obj["settings"], force=force, allow_production=allow_production
+    )
     _emit(ctx, {"reset": True}, "catalog schemas dropped; run `init` to rebuild")
 
 

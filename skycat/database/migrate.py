@@ -18,8 +18,8 @@ from sqlalchemy import create_engine
 from ..config import CatalogDatabaseConfig
 from ..constants import SCHEMA_REGISTRY
 
-_PACKAGE_DIR = Path(__file__).resolve().parents[1]          # skynet_catalogs/
-_PROJECT_DIR = _PACKAGE_DIR.parent                          # packages/py/skynet-catalogs/
+_PACKAGE_DIR = Path(__file__).resolve().parents[1]  # skycat/
+_PROJECT_DIR = _PACKAGE_DIR.parent  # packages/py/skycat/
 _INI = _PROJECT_DIR / "alembic.ini"
 _SCRIPT_LOCATION = _PACKAGE_DIR / "migrations"
 

@@ -1,9 +1,9 @@
 # Catalog ingestion job — imports ONE explicit family + release. NOT part of the
 # base kustomization (never runs on ordinary app startup). Edit the family /
 # release args and apply on demand:
-#   kubectl apply -f infra/kubernetes/deploy/base/jobs/catalog-ingest.yaml
+#   kubectl apply -f infra/kubernetes/deploy/base/jobs/skycat-ingest.yaml
 #
-# Runs `skynet-catalogs import <family> <release> --activate` as the INGEST
+# Runs `skycat import <family> <release> --activate` as the INGEST
 # role. Records import history, validates before activation, builds a new
 # release partition, and only activates after a clean validation. Source data is
 # mounted read-only from a PVC the operator provisions + populates (the image
@@ -11,7 +11,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: catalog-ingest-apass-dr6
+  name: skycat-ingest-apass-dr6
   namespace: skynet-prod
 spec:
   backoffLimit: 0           # imports are explicit; do not auto-retry blindly
@@ -20,8 +20,8 @@ spec:
     spec:
       restartPolicy: Never
       containers:
-        - name: catalog-ingest
-          image: ghcr.io/skynetrtn/skynet-catalogs:stable
+        - name: skycat-ingest
+          image: ghcr.io/skynetrtn/skycat:stable
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -32,11 +32,11 @@ spec:
             # ingest role bulk-loads + writes release metadata. Never mounted by
             # the optical worker Deployments.
             - secretRef:
-                name: skynet-catalog-admin-secrets
+                name: skycat-admin-secrets
           env:
-            - name: SKYNET_CATALOG_DATA_ROOT
+            - name: SKYCAT_DATA_ROOT
               value: /catalog-data
-            - name: SKYNET_CATALOG_WORK_ROOT
+            - name: SKYCAT_WORK_ROOT
               value: /catalog-work
           # Edit family + release here (e.g. apass dr10, vsx current).
           args: ["import", "apass", "dr6", "--activate"]

@@ -1,9 +1,9 @@
 # Skynet-owned catalog database image: PostgreSQL 16 + PostGIS 3.5.
 #
 # This is the *local-development* implementation of the catalog database
-# (Compose service `catalog-postgres`, host port 5433). Production / staging
+# (Compose service `skycat-postgres`, host port 5433). Production / staging
 # use an externally-provisioned PostgreSQL/PostGIS service exposing the same
-# connection + role contract (see packages/py/skynet-catalogs/README.md).
+# connection + role contract (see packages/py/skycat/README.md).
 #
 # Based on `imresamu/postgis` — the multi-arch (amd64 + arm64) continuation of
 # the official `postgis/postgis` images, recommended by the PostGIS project for
@@ -21,8 +21,8 @@ ENV POSTGRES_USER=catalog_admin
 ENV POSTGRES_PASSWORD=catalog
 ENV POSTGRES_DB=catalogs
 
-# Enable PostGIS on first-boot init (idempotent; `skynet-catalogs init` also
+# Enable PostGIS on first-boot init (idempotent; `skycat init` also
 # ensures it). Runs as the bootstrap superuser in the `catalogs` database.
-COPY scripts/catalog-postgis-init.sql /docker-entrypoint-initdb.d/10-postgis.sql
+COPY scripts/skycat-postgis-init.sql /docker-entrypoint-initdb.d/10-postgis.sql
 
 EXPOSE 5432

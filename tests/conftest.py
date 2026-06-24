@@ -1,8 +1,8 @@
 """Shared test fixtures.
 
 Unit tests run anywhere. PostGIS integration tests (marker ``postgis``) require a
-reachable catalog database, configured via the standard ``SKYNET_CATALOG_DB_*``
-environment (e.g. the Compose `catalog-postgres` on 127.0.0.1:5433). They are
+reachable catalog database, configured via the standard ``SKYCAT_DB_*``
+environment (e.g. the Compose `skycat-postgres` on 127.0.0.1:5433). They are
 skipped automatically when no catalog DB is reachable.
 """
 
@@ -13,15 +13,17 @@ from pathlib import Path
 
 import pytest
 
-from skynet_catalogs.config import CatalogRole, CatalogSettings
-from skynet_catalogs.database.engine import create_catalog_engine
+from skycat.config import CatalogRole, CatalogSettings
+from skycat.database.engine import create_catalog_engine
 
 DATA_DIR = Path(__file__).parent / "data"
 
 
 def _reachable(settings: CatalogSettings) -> bool:
     try:
-        engine = create_catalog_engine(settings.config_for(CatalogRole.READER), pool_size=1, max_overflow=0)
+        engine = create_catalog_engine(
+            settings.config_for(CatalogRole.READER), pool_size=1, max_overflow=0
+        )
         with engine.connect() as conn:
             conn.exec_driver_sql("SELECT 1")
         engine.dispose()
@@ -53,8 +55,8 @@ def fixture_data_root(tmp_path_factory) -> Path:
 def pg(settings) -> CatalogSettings:
     if not _reachable(settings):
         pytest.skip(
-            "no reachable catalog PostGIS database — set SKYNET_CATALOG_DB_* "
-            "(e.g. the Compose catalog-postgres on 127.0.0.1:5433)"
+            "no reachable catalog PostGIS database — set SKYCAT_DB_* "
+            "(e.g. the Compose skycat-postgres on 127.0.0.1:5433)"
         )
     return settings
 
@@ -64,11 +66,13 @@ def imported(pg, fixture_data_root) -> CatalogSettings:
     """Initialize the DB and import all three sample releases (idempotent)."""
     import dataclasses
 
-    from skynet_catalogs.database.init import initialize_catalog_database
-    from skynet_catalogs.ingestion import import_release
+    from skycat.database.init import initialize_catalog_database
+    from skycat.ingestion import import_release
 
     s = dataclasses.replace(pg, data_root=str(fixture_data_root))
     initialize_catalog_database(s)
     for fam, rel in [("apass", "dr6"), ("apass", "dr10"), ("vsx", "current")]:
-        import_release(s, fam, rel, activate=True, allow_warnings=True, replace=True, force=True)
+        import_release(
+            s, fam, rel, activate=True, allow_warnings=True, replace=True, force=True
+        )
     return s

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import math
-
 import pytest
 
-from skynet_catalogs.spatial import (
+from skycat.spatial import (
     angular_separation_deg,
     degrees_to_meters,
     is_valid_dec,
@@ -17,17 +15,26 @@ from skynet_catalogs.spatial import (
 )
 
 
-@pytest.mark.parametrize("ra,expected", [
-    (0.0, 0.0), (10.0, 10.0), (180.0, 180.0),
-    (180.1, -179.9), (270.0, -90.0), (359.9, -0.1),
-])
+@pytest.mark.parametrize(
+    "ra,expected",
+    [
+        (0.0, 0.0),
+        (10.0, 10.0),
+        (180.0, 180.0),
+        (180.1, -179.9),
+        (270.0, -90.0),
+        (359.9, -0.1),
+    ],
+)
 def test_ra_to_lon(ra, expected):
     assert ra_to_lon(ra) == pytest.approx(expected)
 
 
 def test_degrees_meters_roundtrip():
     for deg in (0.001, 0.1, 1.0, 5.0, 90.0):
-        assert meters_to_degrees(degrees_to_meters(deg)) == pytest.approx(deg, rel=1e-12)
+        assert meters_to_degrees(degrees_to_meters(deg)) == pytest.approx(
+            deg, rel=1e-12
+        )
 
 
 def test_angular_separation_known():
@@ -36,7 +43,9 @@ def test_angular_separation_known():
     # Across the RA 0/360 boundary: 359.5 and 0.5 are 1 degree apart.
     assert angular_separation_deg(359.5, 0.0, 0.5, 0.0) == pytest.approx(1.0, abs=1e-9)
     # Near the pole: two points at dec 89.9, RA 180 apart are 0.2 deg apart.
-    assert angular_separation_deg(0.0, 89.9, 180.0, 89.9) == pytest.approx(0.2, abs=1e-6)
+    assert angular_separation_deg(0.0, 89.9, 180.0, 89.9) == pytest.approx(
+        0.2, abs=1e-6
+    )
 
 
 def test_validation_ranges():

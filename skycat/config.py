@@ -1,13 +1,13 @@
 """Configuration for the standalone catalog database.
 
 The catalog database has its **own** configuration namespace
-(``SKYNET_CATALOG_DB_*``) and is deliberately decoupled from ``skynet_db`` and
+(``SKYCAT_DB_*``) and is deliberately decoupled from ``skynet_db`` and
 the shared ``SHARED_DB_*`` / ``SKYNET_<APP>_DB_*`` namespaces — connecting to
 the catalog store must never reuse the operational ``sky`` connection settings.
 
 The same ``CatalogDatabaseConfig`` works for:
 
-* Docker-internal connections (``host=catalog-postgres``, ``port=5432``),
+* Docker-internal connections (``host=skycat-postgres``, ``port=5432``),
 * host-to-Compose connections (``host=127.0.0.1``, ``port=5433``),
 * remote staging / production / Kubernetes Service endpoints.
 
@@ -28,7 +28,7 @@ from .constants import (
     PRODUCTION_DB_NAME_MARKERS,
 )
 
-ENV_PREFIX = "SKYNET_CATALOG_DB_"
+ENV_PREFIX = "SKYCAT_DB_"
 
 
 def _env(suffix: str, default: str | None = None) -> str | None:
@@ -197,8 +197,8 @@ class CatalogSettings:
             ingest_password=_env("INGEST_PASSWORD", "") or "",
             reader_user=_env("READER_USER", "") or "",
             reader_password=_env("READER_PASSWORD", "") or "",
-            data_root=os.environ.get("SKYNET_CATALOG_DATA_ROOT", "/srv/agents/catalogs"),
-            work_root=os.environ.get("SKYNET_CATALOG_WORK_ROOT", "/tmp/skynet-catalog-work"),
+            data_root=os.environ.get("SKYCAT_DATA_ROOT", "/srv/agents/catalogs"),
+            work_root=os.environ.get("SKYCAT_WORK_ROOT", "/tmp/skycat-work"),
         )
 
     # --------------------------------------------------------------- roles ---
@@ -217,7 +217,9 @@ class CatalogSettings:
             user, password = self.default_user, self.default_password
         return user, password
 
-    def config_for(self, role: CatalogRole = CatalogRole.DEFAULT) -> CatalogDatabaseConfig:
+    def config_for(
+        self, role: CatalogRole = CatalogRole.DEFAULT
+    ) -> CatalogDatabaseConfig:
         user, password = self._creds_for(role)
         return self.base.with_credentials(user, password)
 

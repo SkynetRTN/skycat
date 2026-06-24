@@ -50,14 +50,13 @@ from ..registry import (
 )
 from ..registry.catalog_defs import get_family_def
 from ..validation import (
-    Check,
     summarize,
     validate_family_staging,
     validate_production,
     validate_staging_common,
 )
 from . import copy_loader
-from .discovery import DiscoveredRelease, compute_content_checksum, discover_one
+from .discovery import compute_content_checksum, discover_one
 from .parsers import ParseStats, get_parser
 
 
@@ -103,14 +102,19 @@ def _drop_existing_partition(conn, data_table: str, release_id: int) -> None:
     child = _partition_name(data_table, release_id)
     fqn = f'{SCHEMA_DATA}."{child}"'
     # Detach if currently attached, then drop.
-    attached = conn.execute(text(
-        "SELECT 1 FROM pg_inherits i "
-        "JOIN pg_class c ON c.oid = i.inhrelid "
-        "JOIN pg_namespace n ON n.oid = c.relnamespace "
-        "WHERE n.nspname = :s AND c.relname = :c"
-    ), {"s": SCHEMA_DATA, "c": child}).scalar()
+    attached = conn.execute(
+        text(
+            "SELECT 1 FROM pg_inherits i "
+            "JOIN pg_class c ON c.oid = i.inhrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = :s AND c.relname = :c"
+        ),
+        {"s": SCHEMA_DATA, "c": child},
+    ).scalar()
     if attached:
-        conn.execute(text(f'ALTER TABLE {SCHEMA_DATA}."{data_table}" DETACH PARTITION {fqn}'))
+        conn.execute(
+            text(f'ALTER TABLE {SCHEMA_DATA}."{data_table}" DETACH PARTITION {fqn}')
+        )
     conn.execute(text(f"DROP TABLE IF EXISTS {fqn}"))
 
 
@@ -121,26 +125,35 @@ def _replicate_parent_indexes(conn, data_table: str, child: str) -> None:
     Uses pg_index/pg_get_indexdef (not pg_indexes) because indexes on a
     *partitioned* parent have relkind 'I' and are not listed by pg_indexes.
     """
-    rows = conn.execute(text(
-        "SELECT c.relname AS indexname, pg_get_indexdef(i.indexrelid) AS indexdef "
-        "FROM pg_index i "
-        "JOIN pg_class c ON c.oid = i.indexrelid "
-        "JOIN pg_class t ON t.oid = i.indrelid "
-        "JOIN pg_namespace n ON n.oid = t.relnamespace "
-        "WHERE n.nspname = :s AND t.relname = :t AND NOT i.indisprimary"
-    ), {"s": SCHEMA_DATA, "t": data_table}).all()
+    rows = conn.execute(
+        text(
+            "SELECT c.relname AS indexname, pg_get_indexdef(i.indexrelid) AS indexdef "
+            "FROM pg_index i "
+            "JOIN pg_class c ON c.oid = i.indexrelid "
+            "JOIN pg_class t ON t.oid = i.indrelid "
+            "JOIN pg_namespace n ON n.oid = t.relnamespace "
+            "WHERE n.nspname = :s AND t.relname = :t AND NOT i.indisprimary"
+        ),
+        {"s": SCHEMA_DATA, "t": data_table},
+    ).all()
     for indexname, indexdef in rows:
         # Drop the explicit (parent) index name first so the child index
         # auto-names and we don't collide with the parent index name.
         ddl = re.sub(
             r'\bINDEX\s+(UNIQUE\s+)?"?' + re.escape(indexname) + r'"?\s+ON',
-            lambda m: f'INDEX {m.group(1) or ""}ON', indexdef,
+            lambda m: f"INDEX {m.group(1) or ''}ON",
+            indexdef,
         )
         # Retarget from the (partitioned) parent — pg_get_indexdef emits
         # "ON ONLY <schema>.<parent>" — to the detached child.
         ddl = re.sub(
-            r'\bON\s+(?:ONLY\s+)?' + re.escape(SCHEMA_DATA) + r'\.' + re.escape(data_table) + r'\b',
-            f'ON {SCHEMA_DATA}."{child}"', ddl,
+            r"\bON\s+(?:ONLY\s+)?"
+            + re.escape(SCHEMA_DATA)
+            + r"\."
+            + re.escape(data_table)
+            + r"\b",
+            f'ON {SCHEMA_DATA}."{child}"',
+            ddl,
         )
         conn.execute(text(ddl))
 
@@ -169,7 +182,9 @@ def import_release(
             f"(known: {[r.slug for r in fam_def.releases]})"
         )
 
-    discovered = discover_one(settings.data_root, family_slug, release_slug, explicit_dir=explicit_dir)
+    discovered = discover_one(
+        settings.data_root, family_slug, release_slug, explicit_dir=explicit_dir
+    )
     if not discovered.present:
         raise IngestionError(
             f"Source for {family_slug}/{release_slug} not found: {discovered.issues}"
@@ -177,7 +192,8 @@ def import_release(
 
     checksum = (
         compute_content_checksum(discovered.data_files)
-        if content_checksum else discovered.manifest_checksum()
+        if content_checksum
+        else discovered.manifest_checksum()
     )
 
     ingest_cfg = settings.config_for(CatalogRole.INGEST)
@@ -187,8 +203,10 @@ def import_release(
     data_table = fam_def.data_table
     table = _table_for(data_table)
     report = ImportReport(
-        family=family_slug, release=rel_def.name,
-        target=ingest_cfg.target_summary(), source_dir=str(discovered.source_dir),
+        family=family_slug,
+        release=rel_def.name,
+        target=ingest_cfg.target_summary(),
+        source_dir=str(discovered.source_dir),
     )
     run_id: int | None = None
 
@@ -198,7 +216,10 @@ def import_release(
             family = sync_family(meta, fam_def)
             meta.commit()
             release = get_or_create_release(
-                meta, family, name=rel_def.name, version=rel_def.version,
+                meta,
+                family,
+                name=rel_def.name,
+                version=rel_def.version,
                 internal_schema_version=INTERNAL_SCHEMA_VERSION,
                 importer_version=IMPORTER_VERSION,
             )
@@ -220,11 +241,15 @@ def import_release(
                 report.state = release.state
                 report.validation_status = release.validation_status
                 report.production_table = release.production_table
-                report.skipped_reason = "already imported (matching checksum); use --replace to force"
+                report.skipped_reason = (
+                    "already imported (matching checksum); use --replace to force"
+                )
                 report.imported = int(release.imported_row_count or 0)
                 return report
 
-            if release.state == CatalogReleaseState.ACTIVE.value and not (replace and force):
+            if release.state == CatalogReleaseState.ACTIVE.value and not (
+                replace and force
+            ):
                 raise IngestionError(
                     f"Release {rel_def.name} is ACTIVE; re-importing requires --replace --force."
                 )
@@ -242,9 +267,12 @@ def import_release(
             meta.commit()
 
             run = IngestionRun(
-                release_id=release_id, status=IngestionRunStatus.RUNNING.value,
-                stage="staging", importer_version=IMPORTER_VERSION,
-                host=socket.gethostname(), source_path=str(discovered.source_dir),
+                release_id=release_id,
+                status=IngestionRunStatus.RUNNING.value,
+                stage="staging",
+                importer_version=IMPORTER_VERSION,
+                host=socket.gethostname(),
+                source_path=str(discovered.source_dir),
             )
             meta.add(run)
             meta.commit()
@@ -262,17 +290,22 @@ def import_release(
             columns = copy_loader.create_staging_table(conn, staging_fqn, table)
             data_paths = [f.path for f in discovered.data_files]
             loaded = copy_loader.copy_rows(
-                conn, staging_fqn, columns,
-                parser.iter_rows(data_paths, stats), on_progress=on_progress,
+                conn,
+                staging_fqn,
+                columns,
+                parser.iter_rows(data_paths, stats),
+                on_progress=on_progress,
             )
             checks, valid, rejected = validate_staging_common(conn, staging_fqn)
             checks += validate_family_staging(family_slug, conn, staging_fqn)
             # Retain rejected rows for diagnostics.
             conn.execute(text(f"DROP TABLE IF EXISTS {rejects_fqn}"))
-            conn.execute(text(
-                f"CREATE UNLOGGED TABLE {rejects_fqn} AS "
-                f"SELECT * FROM {staging_fqn} WHERE reject_reason IS NOT NULL"
-            ))
+            conn.execute(
+                text(
+                    f"CREATE UNLOGGED TABLE {rejects_fqn} AS "
+                    f"SELECT * FROM {staging_fqn} WHERE reject_reason IS NOT NULL"
+                )
+            )
 
         report.parsed = stats.parsed
         report.loaded = loaded
@@ -284,7 +317,9 @@ def import_release(
         if status == ValidationStatus.FAILED:
             raise IngestionError(
                 "Staging validation failed (critical): "
-                + "; ".join(c.detail for c in checks if not c.passed and c.level == "critical")
+                + "; ".join(
+                    c.detail for c in checks if not c.passed and c.level == "critical"
+                )
             )
 
         # --- Phase B: transform -> detached partition -> index -> attach ------
@@ -295,38 +330,60 @@ def import_release(
 
         with engine.begin() as conn:
             _drop_existing_partition(conn, data_table, release_id)
-            conn.execute(text(
-                f'CREATE TABLE {child_fqn} '
-                f'(LIKE {SCHEMA_DATA}."{data_table}" INCLUDING DEFAULTS INCLUDING GENERATED)'
-            ))
-            conn.execute(text(f'ALTER TABLE {child_fqn} ALTER COLUMN release_id SET DEFAULT {release_id}'))
+            conn.execute(
+                text(
+                    f"CREATE TABLE {child_fqn} "
+                    f'(LIKE {SCHEMA_DATA}."{data_table}" INCLUDING DEFAULTS INCLUDING GENERATED)'
+                )
+            )
+            conn.execute(
+                text(
+                    f"ALTER TABLE {child_fqn} ALTER COLUMN release_id SET DEFAULT {release_id}"
+                )
+            )
             # Transform: typed copy from valid staging rows (geom auto-generated).
-            conn.execute(text(
-                f"INSERT INTO {child_fqn} ({col_list}) "
-                f"SELECT {col_list} FROM {staging_fqn} WHERE reject_reason IS NULL"
-            ))
-            imported = conn.execute(text(f"SELECT count(*) FROM {child_fqn}")).scalar_one()
+            conn.execute(
+                text(
+                    f"INSERT INTO {child_fqn} ({col_list}) "
+                    f"SELECT {col_list} FROM {staging_fqn} WHERE reject_reason IS NULL"
+                )
+            )
+            imported = conn.execute(
+                text(f"SELECT count(*) FROM {child_fqn}")
+            ).scalar_one()
             # Constrain + index (after load), then ANALYZE.
-            conn.execute(text(
-                f'ALTER TABLE {child_fqn} ADD CONSTRAINT "{child}_relchk" '
-                f'CHECK (release_id = {release_id})'
-            ))
-            conn.execute(text(f'ALTER TABLE {child_fqn} ADD PRIMARY KEY (release_id, id)'))
+            conn.execute(
+                text(
+                    f'ALTER TABLE {child_fqn} ADD CONSTRAINT "{child}_relchk" '
+                    f"CHECK (release_id = {release_id})"
+                )
+            )
+            conn.execute(
+                text(f"ALTER TABLE {child_fqn} ADD PRIMARY KEY (release_id, id)")
+            )
             _replicate_parent_indexes(conn, data_table, child)
             conn.execute(text(f"ANALYZE {child_fqn}"))
             prod_checks = validate_production(conn, SCHEMA_DATA, child)
             if summarize(prod_checks) == ValidationStatus.FAILED:
                 raise IngestionError(
                     "Production validation failed: "
-                    + "; ".join(c.detail for c in prod_checks if not c.passed and c.level == "critical")
+                    + "; ".join(
+                        c.detail
+                        for c in prod_checks
+                        if not c.passed and c.level == "critical"
+                    )
                 )
             # Attach (fast: redundant CHECK lets PG skip the validation scan),
             # then drop the now-redundant CHECK.
-            conn.execute(text(
-                f'ALTER TABLE {SCHEMA_DATA}."{data_table}" ATTACH PARTITION {child_fqn} '
-                f'FOR VALUES IN ({release_id})'
-            ))
-            conn.execute(text(f'ALTER TABLE {child_fqn} DROP CONSTRAINT "{child}_relchk"'))
+            conn.execute(
+                text(
+                    f'ALTER TABLE {SCHEMA_DATA}."{data_table}" ATTACH PARTITION {child_fqn} '
+                    f"FOR VALUES IN ({release_id})"
+                )
+            )
+            conn.execute(
+                text(f'ALTER TABLE {child_fqn} DROP CONSTRAINT "{child}_relchk"')
+            )
 
         checks += prod_checks
         report.imported = int(imported)
@@ -346,10 +403,14 @@ def import_release(
             release.validation_status = final_status.value
             release.validated_at = _now()
             release.import_completed_at = _now()
-            meta.add(ValidationSummary(
-                release_id=release_id, ingestion_run_id=run_id,
-                status=final_status.value, checks=[c.to_dict() for c in checks],
-            ))
+            meta.add(
+                ValidationSummary(
+                    release_id=release_id,
+                    ingestion_run_id=run_id,
+                    status=final_status.value,
+                    checks=[c.to_dict() for c in checks],
+                )
+            )
             run = meta.get(IngestionRun, run_id)
             run.status = IngestionRunStatus.SUCCEEDED.value
             run.stage = "ready"
@@ -357,16 +418,23 @@ def import_release(
             run.loaded_row_count = int(imported)
             run.rejected_row_count = rejected
             run.finished_at = _now()
-            run.detail = {"malformed": stats.malformed,
-                          "malformed_examples": stats.malformed_examples or []}
+            run.detail = {
+                "malformed": stats.malformed,
+                "malformed_examples": stats.malformed_examples or [],
+            }
             meta.commit()
             report.state = CatalogReleaseState.READY.value
 
             if activate:
                 if final_status == ValidationStatus.FAILED:
                     raise IngestionError("cannot activate: validation failed")
-                if final_status == ValidationStatus.PASSED_WITH_WARNINGS and not allow_warnings:
-                    report.skipped_reason = "not activated: validation warnings (use --allow-warnings)"
+                if (
+                    final_status == ValidationStatus.PASSED_WITH_WARNINGS
+                    and not allow_warnings
+                ):
+                    report.skipped_reason = (
+                        "not activated: validation warnings (use --allow-warnings)"
+                    )
                 else:
                     activate_release(meta, release)
                     meta.commit()
@@ -397,7 +465,10 @@ def import_release(
                         release.failure_detail = detail
                 if run_id is not None:
                     run = meta.get(IngestionRun, run_id)
-                    if run is not None and run.status == IngestionRunStatus.RUNNING.value:
+                    if (
+                        run is not None
+                        and run.status == IngestionRunStatus.RUNNING.value
+                    ):
                         run.status = IngestionRunStatus.FAILED.value
                         run.finished_at = _now()
                         run.message = str(exc)
