@@ -1,4 +1,4 @@
-# skynet-catalogs
+# Skycat
 
 A **standalone** PostgreSQL/PostGIS store for large local astronomical reference
 catalogs — APASS DR6, APASS DR10, VSX, and (by design) future families such as
@@ -7,7 +7,7 @@ Pan-STARRS, 2MASS, UCAC5, Tycho-2, Landolt, Stetson, SkyMapper, USNO-B1.0.
 It is deliberately **independent** of `skynet-db` and of the primary `sky`
 operational database. It has its own SQLAlchemy declarative base, metadata,
 engine/session factory, Alembic environment, schemas, database roles, and
-configuration namespace (`SKYNET_CATALOG_DB_*`). It is never wired into
+configuration namespace (`SKYCAT_DB_*`). It is never wired into
 `skynet_db.db.initialization.initialize_db`, never added to the `sky`
 `reset-db`, and never imports `skynet_db`.
 
@@ -28,7 +28,7 @@ own database (`catalogs`) on their own PostGIS server:
 ```
 Docker Compose project: skynet
 ├── postgres          (existing)  db: sky        host 127.0.0.1:5432  vol postgres_data
-└── catalog-postgres  (new)       db: catalogs   host 127.0.0.1:5433  vol catalog_postgres_data
+└── skycat-postgres  (new)       db: catalogs   host 127.0.0.1:5433  vol catalog_postgres_data
 ```
 
 ---
@@ -37,14 +37,14 @@ Docker Compose project: skynet
 
 | Concern | This package |
 |---|---|
-| Declarative base | `skynet_catalogs.database.base.CatalogBase` (own `MetaData`) |
+| Declarative base | `skycat.database.base.CatalogBase` (own `MetaData`) |
 | Database | `catalogs` (never `sky`) |
 | Schemas | `catalog_registry`, `catalog_data`, `catalog_staging` |
 | Roles | `catalog_owner` (migrator), `catalog_ingest`, `catalog_reader` (+ bootstrap) |
-| Migrations | catalog-owned Alembic env (`skynet_catalogs/migrations`) |
+| Migrations | catalog-owned Alembic env (`skycat/migrations`) |
 | Spatial | `geography(Point,4326)` GENERATED column + GiST, spherical cone search |
-| Config | `SKYNET_CATALOG_DB_*` (never `SHARED_DB_*` / `SKYNET_<APP>_DB_*`) |
-| CLI | `skynet-catalogs …` |
+| Config | `SKYCAT_DB_*` (never `SHARED_DB_*` / `SKYNET_<APP>_DB_*`) |
+| CLI | `skycat …` |
 
 ### PostgreSQL schemas
 
@@ -89,32 +89,32 @@ GiST index on `geom` plus btree indexes on `native_id` / `release_id`.
 
 ## Configuration
 
-All settings live in the `SKYNET_CATALOG_DB_*` namespace. Nothing hard-codes a
+All settings live in the `SKYCAT_DB_*` namespace. Nothing hard-codes a
 host/port — the same code works inside Compose, host→Compose, and against remote
 staging/prod/Kubernetes endpoints.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `SKYNET_CATALOG_DB_BACKEND` | `postgresql+psycopg` | SQLAlchemy driver |
-| `SKYNET_CATALOG_DB_HOST` | `127.0.0.1` | `catalog-postgres` inside Compose |
-| `SKYNET_CATALOG_DB_PORT` | `5433` | `5432` inside Compose |
-| `SKYNET_CATALOG_DB_NAME` | `catalogs` | refuses `sky` |
-| `SKYNET_CATALOG_DB_USER` / `_PASSWORD` | `catalog_reader` / — | default identity |
-| `SKYNET_CATALOG_DB_SSLMODE` | — | libpq sslmode |
-| `SKYNET_CATALOG_DB_POOL_SIZE` / `_MAX_OVERFLOW` / `_POOL_RECYCLE` / `_POOL_TIMEOUT` / `_POOL_PRE_PING` | 10 / 5 / 300 / 30 / true | pool tuning |
-| `SKYNET_CATALOG_DB_ECHO` | false | SQL echo |
-| `SKYNET_CATALOG_DB_STATEMENT_TIMEOUT` | — | per-connection ms |
-| `SKYNET_CATALOG_DB_BOOTSTRAP_USER` / `_PASSWORD` | — | init only (DBA/superuser) |
-| `SKYNET_CATALOG_DB_ADMIN_USER` / `_PASSWORD` | — | owner / migrator |
-| `SKYNET_CATALOG_DB_INGEST_USER` / `_PASSWORD` | — | bulk loader |
-| `SKYNET_CATALOG_DB_READER_USER` / `_PASSWORD` | — | read-only consumer |
-| `SKYNET_CATALOG_DATA_ROOT` | `/srv/agents/catalogs` | read-only source root |
-| `SKYNET_CATALOG_WORK_ROOT` | `/tmp/skynet-catalog-work` | writable scratch |
+| `SKYCAT_DB_BACKEND` | `postgresql+psycopg` | SQLAlchemy driver |
+| `SKYCAT_DB_HOST` | `127.0.0.1` | `skycat-postgres` inside Compose |
+| `SKYCAT_DB_PORT` | `5433` | `5432` inside Compose |
+| `SKYCAT_DB_NAME` | `catalogs` | refuses `sky` |
+| `SKYCAT_DB_USER` / `_PASSWORD` | `catalog_reader` / — | default identity |
+| `SKYCAT_DB_SSLMODE` | — | libpq sslmode |
+| `SKYCAT_DB_POOL_SIZE` / `_MAX_OVERFLOW` / `_POOL_RECYCLE` / `_POOL_TIMEOUT` / `_POOL_PRE_PING` | 10 / 5 / 300 / 30 / true | pool tuning |
+| `SKYCAT_DB_ECHO` | false | SQL echo |
+| `SKYCAT_DB_STATEMENT_TIMEOUT` | — | per-connection ms |
+| `SKYCAT_DB_BOOTSTRAP_USER` / `_PASSWORD` | — | init only (DBA/superuser) |
+| `SKYCAT_DB_ADMIN_USER` / `_PASSWORD` | — | owner / migrator |
+| `SKYCAT_DB_INGEST_USER` / `_PASSWORD` | — | bulk loader |
+| `SKYCAT_DB_READER_USER` / `_PASSWORD` | — | read-only consumer |
+| `SKYCAT_DATA_ROOT` | `/srv/agents/catalogs` | read-only source root |
+| `SKYCAT_WORK_ROOT` | `/tmp/skycat-work` | writable scratch |
 
 Compose-internal vs host values:
 
 ```
-Inside Compose:   host=catalog-postgres  port=5432
+Inside Compose:   host=skycat-postgres  port=5432
 From the host:    host=127.0.0.1         port=5433
 ```
 
@@ -138,12 +138,12 @@ Ordinary query consumers must connect as `catalog_reader`, never bootstrap/owner
 ```
 Host source root:       /srv/agents/catalogs       (read-only)
 Container source root:  /catalog-data              (read-only bind mount)
-Writable work root:     $SKYNET_CATALOG_WORK_ROOT  (manifests, rejects, checkpoints)
+Writable work root:     $SKYCAT_WORK_ROOT  (manifests, rejects, checkpoints)
 ```
 
 Source files are **read-only** and never moved, renamed, or rewritten in place.
 Generated artifacts go to the work root, never the source root. macOS/Linux: set
-`SKYNET_CATALOG_DATA_ROOT` to wherever you keep the datasets (e.g.
+`SKYCAT_DATA_ROOT` to wherever you keep the datasets (e.g.
 `/Users/you/catalogs` on macOS, `/srv/agents/catalogs` on the Linux dev box).
 
 Discovered layout (auto-detected, configurable):
@@ -167,25 +167,25 @@ cp infra/docker/.env.example         infra/docker/.env
 cp infra/docker/.env.secrets.example infra/docker/.env.secrets   # fill REPLACE_ME
 
 # 2. build + start the catalog database
-docker compose -f infra/docker/compose.yaml build catalog-postgres
-docker compose -f infra/docker/compose.yaml up -d catalog-postgres
+docker compose -f infra/docker/compose.yaml build skycat-postgres
+docker compose -f infra/docker/compose.yaml up -d skycat-postgres
 
 # 3. health
-docker compose -f infra/docker/compose.yaml ps catalog-postgres
+docker compose -f infra/docker/compose.yaml ps skycat-postgres
 
 # 4. init (PostGIS + roles + grants) and migrate (schemas + tables)
-docker compose -f infra/docker/compose.yaml --profile catalog-tools run --rm catalog-db-init
-docker compose -f infra/docker/compose.yaml --profile catalog-tools run --rm catalog-db-migrate
+docker compose -f infra/docker/compose.yaml --profile skycat-tools run --rm skycat-init
+docker compose -f infra/docker/compose.yaml --profile skycat-tools run --rm skycat-migrate
 
 # 5. discover + import + validate + activate (APASS DR6)
-docker compose -f infra/docker/compose.yaml --profile catalog-tools run --rm \
-  catalog-dev-tools-run discover
-docker compose -f infra/docker/compose.yaml --profile catalog-tools run --rm \
-  catalog-dev-tools-run import apass dr6 --activate
+docker compose -f infra/docker/compose.yaml --profile skycat-tools run --rm \
+  skycat discover
+docker compose -f infra/docker/compose.yaml --profile skycat-tools run --rm \
+  skycat import apass dr6 --activate
 
 # 6. cone search
-docker compose -f infra/docker/compose.yaml --profile catalog-tools run --rm \
-  catalog-dev-tools-run cone apass --ra 10.0 --dec 1.0 --radius-arcmin 5
+docker compose -f infra/docker/compose.yaml --profile skycat-tools run --rm \
+  skycat cone apass --ra 10.0 --dec 1.0 --radius-arcmin 5
 ```
 
 ### Host-run tooling
@@ -193,21 +193,21 @@ docker compose -f infra/docker/compose.yaml --profile catalog-tools run --rm \
 The same CLI runs directly on the host (port 5433):
 
 ```bash
-export SKYNET_CATALOG_DB_HOST=127.0.0.1 SKYNET_CATALOG_DB_PORT=5433
-export SKYNET_CATALOG_DB_ADMIN_USER=catalog_admin SKYNET_CATALOG_DB_ADMIN_PASSWORD=...
-export SKYNET_CATALOG_DATA_ROOT=/srv/agents/catalogs
+export SKYCAT_DB_HOST=127.0.0.1 SKYCAT_DB_PORT=5433
+export SKYCAT_DB_ADMIN_USER=catalog_admin SKYCAT_DB_ADMIN_PASSWORD=...
+export SKYCAT_DATA_ROOT=/srv/agents/catalogs
 
-skynet-catalogs health
-skynet-catalogs discover
-skynet-catalogs import apass dr6 --activate
-skynet-catalogs cone apass --ra 10 --dec 1 --radius-arcmin 5 --json
+skycat health
+skycat discover
+skycat import apass dr6 --activate
+skycat cone apass --ra 10 --dec 1 --radius-arcmin 5 --json
 ```
 
 ---
 
 ## CLI
 
-`skynet-catalogs <command>` (every destructive command is explicit; add
+`skycat <command>` (every destructive command is explicit; add
 `--json` for machine output):
 
 | Command | Purpose |
@@ -273,11 +273,11 @@ See [docs](../../../docs) and the module docstrings for details.
 
 ```bash
 # unit tests (no DB needed)
-pytest packages/py/skynet-catalogs/tests -q -m "not postgis"
+pytest packages/py/skycat/tests -q -m "not postgis"
 
 # integration tests against a real PostGIS (point at the Compose catalog DB)
-export SKYNET_CATALOG_TEST_DSN=postgresql+psycopg://catalog_admin:...@127.0.0.1:5433/catalogs
-pytest packages/py/skynet-catalogs/tests -q
+export SKYCAT_TEST_DSN=postgresql+psycopg://catalog_admin:...@127.0.0.1:5433/catalogs
+pytest packages/py/skycat/tests -q
 ```
 
 Integration tests use a real PostgreSQL/PostGIS database (never SQLite) for
@@ -290,12 +290,28 @@ indexes. They are skipped automatically when no catalog DB is reachable.
 
 The catalog PostgreSQL/PostGIS server is externally provisioned in
 staging/production (same pattern as `sky`) but exposes the same connection/role
-contract. Workloads receive `SKYNET_CATALOG_DB_*` via the shared ConfigMap
+contract. Workloads receive `SKYCAT_DB_*` via the shared ConfigMap
 (non-secret) and `skynet-runtime-secrets` (credentials). A migration Job runs
 Alembic as the owner role; an ingestion Job imports an explicit family+release as
 the ingest role. Neither drops the database nor runs on ordinary app startup.
-See `infra/kubernetes/deploy/base/jobs/catalog-*.yaml` and the Ansible
+See `infra/kubernetes/deploy/base/jobs/skycat-*.yaml` and the Ansible
 `postgres_server` role's catalog tenant tasks.
+
+### Rename migration boundaries
+
+The package, import, CLI, configuration, image, Compose service, Kubernetes
+Jobs, and Job-only Secret use Skycat names exclusively. Operators must provide
+all package configuration through `SKYCAT_*`; runtime compatibility aliases
+are intentionally not accepted.
+
+Database `catalogs`, schemas `catalog_registry`/`catalog_data`/
+`catalog_staging`, roles `catalog_owner`/`catalog_ingest`/`catalog_reader`, and
+existing volumes remain unchanged because they contain persisted data or are
+shared database contracts. Reuse those resources in place; do not recreate or
+copy their data for this application rename. Create `skycat-admin-secrets`
+with the existing secret values before applying `skycat-init`,
+`skycat-migrate`, or `skycat-ingest`, then retire any superseded Secret only
+after the Skycat Jobs are verified.
 
 ---
 
@@ -308,7 +324,7 @@ role, falling back to remote VizieR when the local store is unavailable or a
 catalog isn't imported locally. The integration lives behind the existing
 provider interface (no PostGIS/SQLAlchemy leaks into the pipeline) — see
 `packages/py/skynet-db/.../optical_data_processing/catalogs/local/README.md`
-for backend-selection modes (`SKYNET_CATALOG_BACKEND`), field mappings, and
+for backend-selection modes (`SKYCAT_BACKEND`), field mappings, and
 failure/health behaviour. The query API it uses (`cone_search`,
 `lookup_native_id`, `batch_crossmatch`) accepts an optional caller-managed
 `engine=` so a long-lived worker reuses one pooled connection.

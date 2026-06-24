@@ -37,7 +37,7 @@ def verify_postgis(conn: Connection) -> str:
     version = postgis_version(conn)
     if not version:
         raise PostgisUnavailableError(
-            "PostGIS is not installed in this database. Run `skynet-catalogs init` "
+            "PostGIS is not installed in this database. Run `skycat init` "
             "(as the bootstrap/DBA role) before migrating or querying."
         )
     return version

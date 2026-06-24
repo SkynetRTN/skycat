@@ -1,8 +1,8 @@
 """Alembic environment for the catalog database.
 
 * Target metadata is **only** ``CatalogBase.metadata`` — never ``skynet_db``'s.
-* The URL is resolved from ``SKYNET_CATALOG_DB_*`` (admin/owner role) unless
-  overridden with ``-x url=...`` / ``SKYNET_CATALOG_ALEMBIC_URL``.
+* The URL is resolved from ``SKYCAT_DB_*`` (admin/owner role) unless
+  overridden with ``-x url=...`` / ``SKYCAT_ALEMBIC_URL``.
 * Refuses to run against the primary ``sky`` database.
 * The Alembic version table lives in the ``catalog_registry`` schema; the three
   catalog schemas are ensured to exist before migrations run so a fresh database
@@ -17,13 +17,13 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine, text
 
-from skynet_catalogs.config import CatalogConfigError, CatalogDatabaseConfig, load_settings
-from skynet_catalogs.constants import ALL_SCHEMAS, CatalogRole
-from skynet_catalogs.database.base import CatalogBase
-from skynet_catalogs.constants import SCHEMA_REGISTRY
+from skycat.config import CatalogDatabaseConfig, load_settings
+from skycat.constants import ALL_SCHEMAS, CatalogRole
+from skycat.database.base import CatalogBase
+from skycat.constants import SCHEMA_REGISTRY
 
 # Import the models so every table is attached to the metadata.
-import skynet_catalogs.models  # noqa: F401
+import skycat.models  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
@@ -39,7 +39,7 @@ def _resolve_url() -> str:
     x_args = context.get_x_argument(as_dictionary=True)
     url = (
         x_args.get("url")
-        or os.environ.get("SKYNET_CATALOG_ALEMBIC_URL")
+        or os.environ.get("SKYCAT_ALEMBIC_URL")
         or config.get_main_option("sqlalchemy.url")
     )
     if url:

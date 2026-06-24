@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from skynet_catalogs.ingestion.parsers import ParseStats, get_parser
+from skycat.ingestion.parsers import ParseStats, get_parser
 
 DATA = Path(__file__).parent / "data"
 

@@ -1,7 +1,7 @@
 """Static, code-level definitions of catalog families and their releases.
 
 This is the single source of truth for *what* catalogs exist, where their source
-data lives relative to ``SKYNET_CATALOG_DATA_ROOT``, and which parser/format
+data lives relative to ``SKYCAT_DATA_ROOT``, and which parser/format
 applies. Used by source discovery, the registry, and the importers.
 
 Adding a new catalog family / release is a matter of adding an entry here plus a
@@ -15,11 +15,11 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class ReleaseDef:
-    slug: str               # e.g. "dr6"
-    name: str               # human/registry name, e.g. "DR6"
-    version: str            # e.g. "6"
-    source_subdir: str      # relative to data root, e.g. "APASS-DR6"
-    source_format: str      # parser key, e.g. "apass_dr6_sum"
+    slug: str  # e.g. "dr6"
+    name: str  # human/registry name, e.g. "DR6"
+    version: str  # e.g. "6"
+    source_subdir: str  # relative to data root, e.g. "APASS-DR6"
+    source_format: str  # parser key, e.g. "apass_dr6_sum"
     # Glob patterns (relative to source_subdir) for the actual data files.
     data_globs: tuple[str, ...] = ()
     # Optional files that are part of the release but not bulk data (readmes…).
@@ -33,8 +33,8 @@ class FamilyDef:
     provider: str
     description: str
     reference_url: str
-    catalog_type: str           # "photometric", "variable_star", "astrometric", …
-    data_table: str             # physical parent table in catalog_data
+    catalog_type: str  # "photometric", "variable_star", "astrometric", …
+    data_table: str  # physical parent table in catalog_data
     coordinate_frame: str = "ICRS"
     epoch_jyear: float | None = 2000.0
     releases: tuple[ReleaseDef, ...] = field(default_factory=tuple)
@@ -103,52 +103,84 @@ CATALOG_FAMILIES: tuple[FamilyDef, ...] = (
     ),
     # --- Planned families (no importer yet) ----------------------------------
     FamilyDef(
-        slug="panstarrs", display_name="Pan-STARRS", provider="IfA Hawaii",
+        slug="panstarrs",
+        display_name="Pan-STARRS",
+        provider="IfA Hawaii",
         description="Pan-STARRS multi-band survey (planned).",
-        reference_url="https://panstarrs.stsci.edu/", catalog_type="photometric",
-        data_table="panstarrs_source", importer_available=False,
+        reference_url="https://panstarrs.stsci.edu/",
+        catalog_type="photometric",
+        data_table="panstarrs_source",
+        importer_available=False,
     ),
     FamilyDef(
-        slug="twomass", display_name="2MASS", provider="IPAC/UMass",
+        slug="twomass",
+        display_name="2MASS",
+        provider="IPAC/UMass",
         description="Two Micron All Sky Survey (planned).",
         reference_url="https://irsa.ipac.caltech.edu/Missions/2mass.html",
-        catalog_type="photometric", data_table="twomass_source", importer_available=False,
+        catalog_type="photometric",
+        data_table="twomass_source",
+        importer_available=False,
     ),
     FamilyDef(
-        slug="ucac5", display_name="UCAC5", provider="USNO",
+        slug="ucac5",
+        display_name="UCAC5",
+        provider="USNO",
         description="USNO CCD Astrograph Catalog 5 (planned).",
-        reference_url="https://www.usno.navy.mil/", catalog_type="astrometric",
-        data_table="ucac5_source", importer_available=False,
+        reference_url="https://www.usno.navy.mil/",
+        catalog_type="astrometric",
+        data_table="ucac5_source",
+        importer_available=False,
     ),
     FamilyDef(
-        slug="tycho2", display_name="Tycho-2", provider="ESA",
+        slug="tycho2",
+        display_name="Tycho-2",
+        provider="ESA",
         description="Tycho-2 astrometric catalog (planned).",
         reference_url="https://www.cosmos.esa.int/web/hipparcos/tycho-2",
-        catalog_type="astrometric", data_table="tycho2_source", importer_available=False,
+        catalog_type="astrometric",
+        data_table="tycho2_source",
+        importer_available=False,
     ),
     FamilyDef(
-        slug="landolt", display_name="Landolt Standards", provider="Landolt",
+        slug="landolt",
+        display_name="Landolt Standards",
+        provider="Landolt",
         description="Landolt photometric standard stars (planned).",
         reference_url="https://doi.org/10.1088/0004-6256/137/5/4186",
-        catalog_type="photometric", data_table="landolt_source", importer_available=False,
+        catalog_type="photometric",
+        data_table="landolt_source",
+        importer_available=False,
     ),
     FamilyDef(
-        slug="stetson", display_name="Stetson Standards", provider="Stetson/CADC",
+        slug="stetson",
+        display_name="Stetson Standards",
+        provider="Stetson/CADC",
         description="Stetson photometric standard fields (planned).",
         reference_url="https://www.canfar.net/storage/list/STETSON",
-        catalog_type="photometric", data_table="stetson_source", importer_available=False,
+        catalog_type="photometric",
+        data_table="stetson_source",
+        importer_available=False,
     ),
     FamilyDef(
-        slug="skymapper", display_name="SkyMapper", provider="ANU",
+        slug="skymapper",
+        display_name="SkyMapper",
+        provider="ANU",
         description="SkyMapper Southern Survey (planned).",
-        reference_url="https://skymapper.anu.edu.au/", catalog_type="photometric",
-        data_table="skymapper_source", importer_available=False,
+        reference_url="https://skymapper.anu.edu.au/",
+        catalog_type="photometric",
+        data_table="skymapper_source",
+        importer_available=False,
     ),
     FamilyDef(
-        slug="usnob1", display_name="USNO-B1.0", provider="USNO",
+        slug="usnob1",
+        display_name="USNO-B1.0",
+        provider="USNO",
         description="USNO-B1.0 astrometric/photometric catalog (planned).",
-        reference_url="https://www.usno.navy.mil/", catalog_type="astrometric",
-        data_table="usnob1_source", importer_available=False,
+        reference_url="https://www.usno.navy.mil/",
+        catalog_type="astrometric",
+        data_table="usnob1_source",
+        importer_available=False,
     ),
 )
 

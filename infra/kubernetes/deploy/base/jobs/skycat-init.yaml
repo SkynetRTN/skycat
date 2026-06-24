@@ -1,8 +1,8 @@
 # One-time (idempotent) catalog database setup. NOT part of the base
 # kustomization — apply on demand, never on ordinary app startup:
-#   kubectl apply -f infra/kubernetes/deploy/base/jobs/catalog-init.yaml
+#   kubectl apply -f infra/kubernetes/deploy/base/jobs/skycat-init.yaml
 #
-# Runs `skynet-catalogs init` as the bootstrap/DBA role: enables PostGIS,
+# Runs `skycat init` as the bootstrap/DBA role: enables PostGIS,
 # creates the operational roles (owner/ingest/reader) + grants, ensures the
 # schemas, hands the data objects to the ingest role, and applies Alembic
 # migrations. Non-destructive; verifies the target database is `catalogs`
@@ -10,7 +10,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: catalog-init
+  name: skycat-init
   namespace: skynet-prod
 spec:
   backoffLimit: 1
@@ -19,8 +19,8 @@ spec:
     spec:
       restartPolicy: Never
       containers:
-        - name: catalog-init
-          image: ghcr.io/skynetrtn/skynet-catalogs:stable
+        - name: skycat-init
+          image: ghcr.io/skynetrtn/skycat:stable
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -29,5 +29,5 @@ spec:
                 name: skynet-runtime-secrets
             # Privileged catalog creds (bootstrap/admin/ingest) — Job-only.
             - secretRef:
-                name: skynet-catalog-admin-secrets
+                name: skycat-admin-secrets
           args: ["init"]

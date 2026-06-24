@@ -11,7 +11,7 @@ Release-partitioned like APASS (``LIST (release_id)``).
 
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Double, Integer, Sequence, SmallInteger, String, Text
+from sqlalchemy import BigInteger, Double, Integer, Sequence, SmallInteger, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 

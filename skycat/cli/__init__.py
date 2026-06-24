@@ -1,4 +1,4 @@
-"""skynet-catalogs command-line interface."""
+"""skycat command-line interface."""
 
 from .main import main, main_entry
 

@@ -1,4 +1,4 @@
-"""Source discovery under ``SKYNET_CATALOG_DATA_ROOT``.
+"""Source discovery under ``SKYCAT_DATA_ROOT``.
 
 Locates catalog families/releases, verifies their data files exist, computes a
 fast *manifest* checksum (filenames + sizes + mtimes — not a multi-GB content
@@ -15,7 +15,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..registry.catalog_defs import CATALOG_FAMILIES, FamilyDef, ReleaseDef, get_family_def
+from ..registry.catalog_defs import (
+    CATALOG_FAMILIES,
+    FamilyDef,
+    ReleaseDef,
+    get_family_def,
+)
 
 
 @dataclass
@@ -57,11 +62,15 @@ class DiscoveredRelease:
 def compute_manifest_checksum(files: list[DiscoveredFile]) -> str:
     h = hashlib.sha256()
     for f in sorted(files, key=lambda x: x.relative_path):
-        h.update(f"{f.relative_path}:{f.size_bytes}:{int(f.modified_at.timestamp())}\n".encode())
+        h.update(
+            f"{f.relative_path}:{f.size_bytes}:{int(f.modified_at.timestamp())}\n".encode()
+        )
     return h.hexdigest()
 
 
-def compute_content_checksum(files: list[DiscoveredFile], *, chunk: int = 1 << 20) -> str:
+def compute_content_checksum(
+    files: list[DiscoveredFile], *, chunk: int = 1 << 20
+) -> str:
     """Full content hash (streamed). Expensive on multi-GB sets — opt-in."""
     h = hashlib.sha256()
     for f in sorted(files, key=lambda x: x.relative_path):
@@ -72,7 +81,9 @@ def compute_content_checksum(files: list[DiscoveredFile], *, chunk: int = 1 << 2
     return h.hexdigest()
 
 
-def _scan(source_dir: Path, patterns: tuple[str, ...], role: str) -> list[DiscoveredFile]:
+def _scan(
+    source_dir: Path, patterns: tuple[str, ...], role: str
+) -> list[DiscoveredFile]:
     found: dict[str, DiscoveredFile] = {}
     for pattern in patterns:
         for path in sorted(source_dir.glob(pattern)):
@@ -129,8 +140,11 @@ def discover_all(data_root: Path | str) -> list[DiscoveredRelease]:
 
 
 def discover_one(
-    data_root: Path | str, family_slug: str, release_slug: str,
-    *, explicit_dir: Path | str | None = None,
+    data_root: Path | str,
+    family_slug: str,
+    release_slug: str,
+    *,
+    explicit_dir: Path | str | None = None,
 ) -> DiscoveredRelease:
     fam = get_family_def(family_slug)
     if fam is None:

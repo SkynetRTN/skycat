@@ -1,9 +1,9 @@
-"""skynet-catalogs — standalone PostgreSQL/PostGIS store for large local
+"""Skycat — standalone PostgreSQL/PostGIS store for large local
 astronomical reference catalogs (APASS, VSX, …).
 
 Architecturally independent of ``skynet_db`` and the primary ``sky`` database:
 its own declarative base/metadata, engine, Alembic environment, schemas, roles,
-and configuration namespace (``SKYNET_CATALOG_DB_*``).
+and configuration namespace (``SKYCAT_DB_*``).
 """
 
 from __future__ import annotations

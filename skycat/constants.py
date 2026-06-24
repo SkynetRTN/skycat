@@ -1,4 +1,4 @@
-"""Package-wide constants for skynet-catalogs.
+"""Package-wide constants for skycat.
 
 Kept dependency-free so every other module (config, models, migrations, CLI)
 can import these without pulling in SQLAlchemy.
@@ -87,17 +87,17 @@ class ValidationStatus(str, enum.Enum):
 class CatalogRole(str, enum.Enum):
     """Logical connection identities. Mapped to concrete DB users by config."""
 
-    BOOTSTRAP = "bootstrap"      # container superuser / DBA — init only
-    ADMIN = "admin"             # owner / migrator
-    INGEST = "ingest"           # bulk loader + release metadata writer
-    READER = "reader"           # query / crossmatch consumer
-    DEFAULT = "default"         # generic app identity (resolves to reader)
+    BOOTSTRAP = "bootstrap"  # container superuser / DBA — init only
+    ADMIN = "admin"  # owner / migrator
+    INGEST = "ingest"  # bulk loader + release metadata writer
+    READER = "reader"  # query / crossmatch consumer
+    DEFAULT = "default"  # generic app identity (resolves to reader)
 
 
 # Concrete role names created inside the catalogs database.
-ROLE_OWNER = "catalog_owner"      # owns schemas + objects, applies migrations
-ROLE_INGEST = "catalog_ingest"    # NOLOGIN group + login member loads data
-ROLE_READER = "catalog_reader"    # read-only query consumer
+ROLE_OWNER = "catalog_owner"  # owns schemas + objects, applies migrations
+ROLE_INGEST = "catalog_ingest"  # NOLOGIN group + login member loads data
+ROLE_READER = "catalog_reader"  # read-only query consumer
 
 # Internal schema version stamped onto releases; bump when the typed production
 # table shape for a family changes in a way that affects already-imported rows.

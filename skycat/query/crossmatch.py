@@ -20,7 +20,7 @@ from ..constants import POSTGIS_SPHERE_RADIUS_M, SCHEMA_DATA, SRID
 from ..database.base import CatalogBase
 from ..database.engine import create_catalog_engine
 from ..spatial import degrees_to_meters
-from .cone import CatalogQueryError, resolve_release_for_query
+from .cone import resolve_release_for_query
 
 _QGEOM_EXPR = (
     "(ST_SetSRID(ST_MakePoint("
@@ -79,7 +79,9 @@ def batch_crossmatch(
             driver = conn.connection.driver_connection
             n_inputs = 0
             with driver.cursor() as cur:
-                with cur.copy("COPY _xm_inputs (input_id, ra_deg, dec_deg) FROM STDIN") as cp:
+                with cur.copy(
+                    "COPY _xm_inputs (input_id, ra_deg, dec_deg) FROM STDIN"
+                ) as cp:
                     for input_id, ra, dec in inputs:
                         cp.write_row((str(input_id), float(ra), float(dec)))
                         n_inputs += 1
@@ -104,8 +106,13 @@ def batch_crossmatch(
                 """
             )
             rows = conn.execute(
-                sql, {"r": POSTGIS_SPHERE_RADIUS_M, "rid": resolved.release_id,
-                      "radm": radius_m, "lim": limit}
+                sql,
+                {
+                    "r": POSTGIS_SPHERE_RADIUS_M,
+                    "rid": resolved.release_id,
+                    "radm": radius_m,
+                    "lim": limit,
+                },
             ).mappings()
             return [dict(row) for row in rows]
     finally:
