@@ -28,6 +28,11 @@ spec:
                 name: skynet-shared-config
             - secretRef:
                 name: skynet-runtime-secrets
+            # Privileged catalog creds (bootstrap/admin/ingest) — Job-only; the
+            # ingest role bulk-loads + writes release metadata. Never mounted by
+            # the optical worker Deployments.
+            - secretRef:
+                name: skynet-catalog-admin-secrets
           env:
             - name: SKYNET_CATALOG_DATA_ROOT
               value: /catalog-data

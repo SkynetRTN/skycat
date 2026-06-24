@@ -11,6 +11,13 @@ The package and its full documentation live at
 [`packages/py/skynet-catalogs/`](https://github.com/skynetrtn/skynet/tree/main/packages/py/skynet-catalogs)
 (see its `README.md`). This page is the operator quick-reference.
 
+> **Bringing the local catalog online for the optical pipeline?** Follow the
+> step-by-step Phase-1 rollout runbook in
+> [`CATALOG_LOCAL_ROLLOUT.md`](CATALOG_LOCAL_ROLLOUT.md): install the worker
+> dependency, provision + initialise the DB, import/validate/activate APASS
+> DR6+DR10 and VSX, run the worker in strict local-only mode, and prove no
+> remote catalog access occurs.
+
 ## Architecture
 
 ```
