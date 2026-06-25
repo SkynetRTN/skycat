@@ -1,8 +1,16 @@
 # Skycat
 
 A **standalone** PostgreSQL/PostGIS store for large local astronomical reference
-catalogs — APASS DR6, APASS DR10, VSX, and (by design) future families such as
-Pan-STARRS, 2MASS, UCAC5, Tycho-2, Landolt, Stetson, SkyMapper, USNO-B1.0.
+catalogs — APASS DR6, APASS DR10, VSX, Landolt (1992 + 2009) and Stetson
+globular-cluster standards, plus (by design) future families such as
+Pan-STARRS, 2MASS, UCAC5, Tycho-2, SkyMapper, USNO-B1.0.
+
+| Family | Releases | Source (CDS) | Parser format | Rows | Provider |
+|--------|----------|--------------|---------------|------|----------|
+| `apass` | DR6, DR10 | AAVSO | `apass_dr6_sum` / `apass_dr10_txt` | 42.6M / 128.6M | APASS |
+| `vsx` | current | B/vsx | `vsx_dat` | 10.3M | VSX |
+| `landolt` | 1992, 2009 | II/183A, J/AJ/137/4186 | `landolt_1992_dat` / `landolt_2009_dat` | 526 / 595 | Landolt |
+| `stetson` | StetsonGlobs | J/MNRAS/485/3042 | `stetson_globs_dat` | 4.89M | StetsonGlobs |
 
 It is deliberately **independent** of `skynet-db` and of the primary `sky`
 operational database. It has its own SQLAlchemy declarative base, metadata,
@@ -62,7 +70,11 @@ Each family has its own scientifically-typed table, its own parser, validation,
 spatial indexes, and release-aware partitions. Unrelated families are **never**
 forced into one universal row table. APASS DR6 and DR10 are two releases of one
 APASS family sharing a canonical superset schema (bands absent in a release are
-NULL). VSX has its own typed model.
+NULL). VSX has its own typed model. **Landolt** is one family with two releases
+(1992 + 2009) sharing a model that stores V plus the five color indices (the
+individual U/B/R/I bands are *derived* downstream exactly as the remote provider
+does — see below). **Stetson** has its own typed model (U/B/V/R/I with per-band
+counts, DAOPHOT chi/sharp, Welch-Stetson variability, cluster name).
 
 ### PostGIS coordinate representation
 
@@ -150,9 +162,19 @@ Discovered layout (auto-detected, configurable):
 
 ```
 catalogs/
-├── APASS-DR6/   apass_dr6*.zip + zp/zm *_6.sum  (.sum, V B-V B g' r' i' + errors)
-├── APASS-DR10/  apass_dr10*.zip + zp/zm *.txt   (.txt, B V u g r i z Y nobs+mag+err; 99.999 = missing)
-└── VSX/         vsx.dat (+ ReadMe)              (fixed-width CDS byte format)
+├── APASS-DR6/     apass_dr6*.zip + zp/zm *_6.sum  (.sum, V B-V B g' r' i' + errors)
+├── APASS-DR10/    apass_dr10*.zip + zp/zm *.txt   (.txt, B V u g r i z Y nobs+mag+err; 99.999 = missing)
+├── VSX/           vsx.dat (+ ReadMe)              (fixed-width CDS byte format)
+├── Landolt_1992/  table2.dat (+ ReadMe)           (fixed-width II/183A; 526 standard stars)
+├── Landolt_2009/  table2.dat (+ ReadMe, table5)   (fixed-width J/AJ/137/4186; 595 stars; table5 aux)
+└── StetsonGlobs/  table4.dat (+ ReadMe, table2)   (pipe-delimited J/MNRAS/485/3042; 4.89M rows)
+```
+
+The photometry datasets are mounted at `/srv/agents/catalogs/photometry`, which
+is also a valid `SKYCAT_DATA_ROOT` (it holds the APASS/VSX dirs too):
+
+```bash
+export SKYCAT_DATA_ROOT=/srv/agents/catalogs/photometry
 ```
 
 ---
@@ -202,6 +224,79 @@ skycat discover
 skycat import apass dr6 --activate
 skycat cone apass --ra 10 --dec 1 --radius-arcmin 5 --json
 ```
+
+---
+
+## Photometric standard catalogs (Landolt & Stetson)
+
+Landolt and Stetson are imported the same way as APASS/VSX. Import without
+activating first, then activate deliberately:
+
+```bash
+export SKYCAT_DATA_ROOT=/srv/agents/catalogs/photometry
+
+# Landolt — one family, two releases (1992 and 2009). --source-dir is optional
+# when the dirs sit under SKYCAT_DATA_ROOT (Landolt_1992 / Landolt_2009).
+skycat import landolt 1992 --source-dir /srv/agents/catalogs/photometry/Landolt_1992
+skycat import landolt 2009 --source-dir /srv/agents/catalogs/photometry/Landolt_2009
+
+# Stetson — the StetsonGlobs release (~4.9M rows; the COPY+index step runs for
+# a few minutes).
+skycat import stetson StetsonGlobs --source-dir /srv/agents/catalogs/photometry/StetsonGlobs
+
+# Activate deliberately: 2009 is the default-active Landolt release (newest /
+# most complete); 1992 stays ready and is still queryable explicitly.
+skycat activate landolt 2009
+skycat activate stetson StetsonGlobs
+
+# Validation / state
+skycat validate landolt 1992          # re-validate a production partition
+skycat releases landolt               # show release states
+```
+
+Querying — active release vs. an explicit release:
+
+```bash
+# Active Landolt (2009) near a standard field
+skycat cone landolt --ra 7.5375 --dec -46.5228 --radius-arcmin 10
+
+# Explicit Landolt 1992 (the release the remote VizieR provider mirrors)
+skycat cone landolt --ra 7.5375 --dec -46.5228 --radius-arcmin 10 --release 1992
+
+# Stetson cone in a globular cluster + native-id lookup (Star id is unique only
+# within a cluster, so it repeats across clusters)
+skycat cone   stetson --ra 250.4234 --dec 36.4613 --radius-arcmin 1
+skycat lookup stetson 1 --release StetsonGlobs
+skycat cone   stetson --ra 250.4234 --dec 36.4613 --radius-arcmin 1 --explain  # proves GiST use
+```
+
+### Magnitudes, identifiers, and remote parity
+
+- **Landolt** stores `V` plus the five color indices (`B-V`, `U-B`, `V-R`,
+  `R-I`, `V-I`) and their errors. The individual **U/B/R/I** bands are *not*
+  stored — the optical provider derives them at query time from V + colors,
+  reproducing the remote `LandoltCatalog` derivation byte-for-byte
+  (`B = V + (B-V)`, `U = B + (U-B)`, `R = V − (V-R)`,
+  `I = ((R − (R-I)) + (V − (V-I)))/2`, including the remote's U-error-from-V-R
+  quirk). `native_id` is the star designation (e.g. `TPHE A`, `92 309`).
+  The remote VizieR provider targets **II/183A = Landolt 1992**, so for a strict
+  backend parity comparison query the explicit `1992` release.
+- **Stetson** stores U/B/V/R/I with per-band counts and quality columns. The
+  `Star` id is unique only *within* a cluster (matching the remote
+  `col_mapping['id'] = 'Star'`); `native_id` therefore repeats across clusters,
+  and the `cluster` column (indexed) supports field-name filtering. Missing
+  bands stay missing; partial-band stars keep the bands they have.
+
+### Troubleshooting malformed `.dat` files
+
+Parsers stream rows and **never silently skip** bad input: a line that cannot be
+parsed (bad coordinate, wrong field count, …) is counted in
+`ParseStats.malformed` and the first 20 examples are retained on the ingestion
+run's `detail.malformed_examples`. Rows that parse but fail a DB-side check
+(null id, out-of-range RA/Dec, null cluster) are marked with a `reject_reason`
+and copied into a retained `catalog_staging.<family>_<release>_rejects` table
+rather than dropped. Duplicate native ids are expected for Stetson (per-cluster
+`Star`) and reported as INFO; Landolt designation duplicates are a WARNING.
 
 ---
 
@@ -318,10 +413,10 @@ after the Skycat Jobs are verified.
 ## Consumers
 
 The Skynet **optical pipeline** consumes this package as the *local-first*
-backend for its catalog providers (APASS, VSX): cone searches, native-id lookup,
-and batch crossmatch are served from here via the read-only `catalog_reader`
-role, falling back to remote VizieR when the local store is unavailable or a
-catalog isn't imported locally. The integration lives behind the existing
+backend for its catalog providers (APASS, VSX, Landolt, Stetson): cone searches,
+native-id lookup, and batch crossmatch are served from here via the read-only
+`catalog_reader` role, falling back to remote VizieR when the local store is
+unavailable or a catalog isn't imported locally. The integration lives behind the existing
 provider interface (no PostGIS/SQLAlchemy leaks into the pipeline) — see
 `packages/py/skynet-db/.../optical_data_processing/catalogs/local/README.md`
 for backend-selection modes (`SKYCAT_BACKEND`), field mappings, and

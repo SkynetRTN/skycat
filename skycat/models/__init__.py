@@ -5,6 +5,7 @@ Importing this module imports every model so they are attached to
 """
 
 from .apass import APASS_ID_SEQUENCE, ApassSource
+from .landolt import LANDOLT_ID_SEQUENCE, LandoltSource
 from .registry import (
     CatalogFamily,
     CatalogRelease,
@@ -13,6 +14,7 @@ from .registry import (
     SourceManifest,
     ValidationSummary,
 )
+from .stetson import STETSON_ID_SEQUENCE, StetsonSource
 from .vsx import VSX_ID_SEQUENCE, VsxSource
 
 __all__ = [
@@ -21,8 +23,12 @@ __all__ = [
     "CatalogFamily",
     "CatalogRelease",
     "IngestionRun",
+    "LANDOLT_ID_SEQUENCE",
+    "LandoltSource",
     "SourceFile",
     "SourceManifest",
+    "STETSON_ID_SEQUENCE",
+    "StetsonSource",
     "ValidationSummary",
     "VSX_ID_SEQUENCE",
     "VsxSource",

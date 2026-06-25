@@ -45,9 +45,15 @@ def fixture_data_root(tmp_path_factory) -> Path:
     (root / "APASS-DR6").mkdir()
     (root / "APASS-DR10").mkdir()
     (root / "VSX").mkdir()
+    (root / "Landolt_1992").mkdir()
+    (root / "Landolt_2009").mkdir()
+    (root / "StetsonGlobs").mkdir()
     shutil.copy(DATA_DIR / "apass_dr6_sample.sum", root / "APASS-DR6" / "zp00_6.sum")
     shutil.copy(DATA_DIR / "apass_dr10_sample.txt", root / "APASS-DR10" / "zp00.txt")
     shutil.copy(DATA_DIR / "vsx_sample.dat", root / "VSX" / "vsx.dat")
+    shutil.copy(DATA_DIR / "landolt_1992_sample.dat", root / "Landolt_1992" / "table2.dat")
+    shutil.copy(DATA_DIR / "landolt_2009_sample.dat", root / "Landolt_2009" / "table2.dat")
+    shutil.copy(DATA_DIR / "stetson_globs_sample.dat", root / "StetsonGlobs" / "table4.dat")
     return root
 
 
@@ -71,7 +77,12 @@ def imported(pg, fixture_data_root) -> CatalogSettings:
 
     s = dataclasses.replace(pg, data_root=str(fixture_data_root))
     initialize_catalog_database(s)
-    for fam, rel in [("apass", "dr6"), ("apass", "dr10"), ("vsx", "current")]:
+    # Landolt is imported 1992 then 2009 with activate=True, so 2009 ends ACTIVE
+    # and 1992 SUPERSEDED (queryable explicitly) — mirroring the production layout.
+    for fam, rel in [
+        ("apass", "dr6"), ("apass", "dr10"), ("vsx", "current"),
+        ("landolt", "1992"), ("landolt", "2009"), ("stetson", "stetsonglobs"),
+    ]:
         import_release(
             s, fam, rel, activate=True, allow_warnings=True, replace=True, force=True
         )

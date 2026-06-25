@@ -144,23 +144,70 @@ CATALOG_FAMILIES: tuple[FamilyDef, ...] = (
     ),
     FamilyDef(
         slug="landolt",
-        display_name="Landolt Standards",
-        provider="Landolt",
-        description="Landolt photometric standard stars (planned).",
-        reference_url="https://doi.org/10.1088/0004-6256/137/5/4186",
+        display_name="Landolt UBVRI Photometric Standards",
+        provider="Landolt / CDS",
+        description=(
+            "Landolt UBVRI photoelectric standard stars on the Johnson-Kron-Cousins "
+            "system, centred on the celestial equator. Modelled as one family with "
+            "two releases: 1992 (CDS II/183A) and 2009 (CDS J/AJ/137/4186). Each "
+            "release stores V plus the five color indices (B-V, U-B, V-R, R-I, V-I) "
+            "and their errors; the individual U/B/R/I bands are derived at query time "
+            "exactly as the remote VizieR provider does."
+        ),
+        reference_url="https://cdsarc.cds.unistra.fr/viz-bin/cat/II/183A",
         catalog_type="photometric",
         data_table="landolt_source",
-        importer_available=False,
+        releases=(
+            ReleaseDef(
+                slug="1992",
+                name="1992",
+                version="1992",
+                source_subdir="Landolt_1992",
+                source_format="landolt_1992_dat",
+                # table2.dat = the 526 standard stars (the only photometry table).
+                data_globs=("table2.dat",),
+                aux_globs=("ReadMe",),
+            ),
+            ReleaseDef(
+                slug="2009",
+                name="2009",
+                version="2009",
+                source_subdir="Landolt_2009",
+                source_format="landolt_2009_dat",
+                # table2.dat = UBVRI photometry; table5.dat (coords + proper motions,
+                # UCAC2/2MASS ids) is auxiliary and not part of the remote row contract.
+                data_globs=("table2.dat",),
+                aux_globs=("ReadMe", "table5.dat"),
+            ),
+        ),
     ),
     FamilyDef(
         slug="stetson",
-        display_name="Stetson Standards",
-        provider="Stetson/CADC",
-        description="Stetson photometric standard fields (planned).",
-        reference_url="https://www.canfar.net/storage/list/STETSON",
+        display_name="Stetson UBVRI Photometry in Globular Clusters",
+        provider="Stetson / CDS",
+        description=(
+            "Homogeneous Johnson-Cousins UBVRI photometry for 48 Galactic globular "
+            "clusters (Stetson+ 2019, CDS J/MNRAS/485/3042). The StetsonGlobs release "
+            "imports the ~4.9M-row final catalogue (table4.dat); the per-cluster Star "
+            "id is unique only within a cluster, matching the remote provider."
+        ),
+        reference_url="https://cdsarc.cds.unistra.fr/viz-bin/cat/J/MNRAS/485/3042",
         catalog_type="photometric",
         data_table="stetson_source",
-        importer_available=False,
+        epoch_jyear=2000.0,
+        releases=(
+            ReleaseDef(
+                slug="stetsonglobs",
+                name="StetsonGlobs",
+                version="2019",
+                source_subdir="StetsonGlobs",
+                source_format="stetson_globs_dat",
+                # table4.dat = the final per-star catalogue. table2.dat (cluster list)
+                # and table1/tablea* are auxiliary observation metadata.
+                data_globs=("table4.dat",),
+                aux_globs=("ReadMe", "table2.dat", "table1.dat", "tablea*.dat"),
+            ),
+        ),
     ),
     FamilyDef(
         slug="skymapper",

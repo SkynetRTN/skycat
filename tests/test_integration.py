@@ -219,3 +219,99 @@ def test_missing_source_fails_cleanly(imported, tmp_path):
         import_release(
             imported, "apass", "dr6", explicit_dir=str(empty), replace=True, force=True
         )
+
+
+# --------------------------------------------------------------- Landolt / Stetson
+
+
+def test_landolt_release_states(imported):
+    """Two Landolt releases: 2009 active (newest), 1992 superseded but queryable."""
+    eng = _reader(imported)
+    with eng.connect() as conn:
+        states = dict(
+            conn.execute(
+                text(
+                    "SELECT r.name, r.state FROM catalog_registry.catalog_release r "
+                    "JOIN catalog_registry.catalog_family f ON f.id=r.family_id "
+                    "WHERE f.slug='landolt'"
+                )
+            ).all()
+        )
+    eng.dispose()
+    assert states["2009"] == "active"
+    assert states["1992"] == "superseded"
+
+
+def test_landolt_explicit_releases_queryable(imported):
+    # TPHE A is at RA 7.5375 deg, Dec -46.5228 in both releases.
+    dr92 = cone_search(
+        imported, "landolt", 7.5375, -46.5228, radius_deg=0.1, release="1992"
+    )
+    assert any(r["native_id"] == "TPHE A" for r in dr92)
+    # Active (2009) resolves without an explicit release.
+    active = cone_search(imported, "landolt", 7.5375, -46.5228, radius_deg=0.1)
+    assert any(r["native_id"].startswith("TPhe") for r in active)
+    # V + the five color indices are typed columns (U/B/R/I are derived downstream).
+    row = next(r for r in dr92 if r["native_id"] == "TPHE A")
+    assert row["johnson_v_mag"] == 14.651
+    assert row["b_minus_v_mag"] == 0.793
+
+
+def test_landolt_ra_wraparound(imported):
+    # The RWRAP B fixture star sits at RA ≈ 359.958; a cone at RA 0.0 must find it.
+    rows = cone_search(imported, "landolt", 0.0, -0.0375, radius_deg=0.2, release="1992")
+    assert any(r["native_id"] == "RWRAP B" for r in rows)
+
+
+def test_stetson_cone_and_field(imported):
+    # E3 cluster fixture stars cluster near RA 138.8, Dec -77.1.
+    rows = cone_search(imported, "stetson", 138.822, -77.112, radius_deg=0.5)
+    assert rows and rows[0]["native_id"] == "4"
+    assert rows[0]["cluster"] == "E3"
+    # partial-band star: B/V/I present, U/R NULL (missing stays missing).
+    assert rows[0]["johnson_b_mag"] == 19.457
+    assert rows[0]["johnson_u_mag"] is None and rows[0]["cousins_r_mag"] is None
+
+
+def test_stetson_native_id_repeats_across_clusters(imported):
+    # Star "1741" appears in two clusters in the fixture (unique only within a field).
+    rows = lookup_native_id(imported, "stetson", "1741")
+    clusters = {r["cluster"] for r in rows}
+    assert clusters == {"NGC6205", "NGC288"}
+
+
+def test_stetson_cone_uses_spatial_index(imported):
+    from skycat.spatial import degrees_to_meters
+
+    eng = _reader(imported)
+    radius_m = degrees_to_meters(0.5)
+    with eng.connect() as conn:
+        rid = conn.execute(
+            text(
+                "SELECT r.id FROM catalog_registry.catalog_release r "
+                "JOIN catalog_registry.catalog_family f ON f.id=r.family_id "
+                "WHERE f.slug='stetson' AND r.state='active'"
+            )
+        ).scalar()
+        conn.exec_driver_sql("SET LOCAL enable_seqscan = off")
+        plan = "\n".join(
+            row[0]
+            for row in conn.execute(
+                text(
+                    f"EXPLAIN SELECT id FROM catalog_data.stetson_source "
+                    f"WHERE release_id = {rid} AND ST_DWithin(geom, "
+                    f"ST_SetSRID(ST_MakePoint(138.822, -77.112),4326)::geography, {radius_m}, false)"
+                )
+            ).all()
+        )
+    eng.dispose()
+    assert "Index Scan" in plan or "Bitmap Index Scan" in plan or "gist" in plan.lower()
+
+
+def test_landolt_batch_crossmatch(imported):
+    inputs = [("a", 7.5375, -46.5228), ("z", 12.0, 80.0)]
+    rows = batch_crossmatch(imported, "landolt", inputs, radius_deg=60 / 3600.0,
+                            release="1992")
+    by_id = {r["input_id"]: r for r in rows}
+    assert by_id["a"]["matched"] and by_id["a"]["native_id"] == "TPHE A"
+    assert not by_id["z"]["matched"]

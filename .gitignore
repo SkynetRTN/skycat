@@ -35,3 +35,6 @@ __pycache__/
 tests/data/*.zip
 tests/data/*.dat
 !tests/data/vsx_sample.dat
+!tests/data/landolt_1992_sample.dat
+!tests/data/landolt_2009_sample.dat
+!tests/data/stetson_globs_sample.dat
