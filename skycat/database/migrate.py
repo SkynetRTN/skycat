@@ -65,6 +65,6 @@ def current_revision(config: CatalogDatabaseConfig) -> str | None:
 def is_up_to_date(config: CatalogDatabaseConfig) -> bool:
     try:
         current = current_revision(config)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort probe: any failure means "not up to date"
         return False
     return current is not None and current in set(script_heads(config))

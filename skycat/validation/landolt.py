@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from sqlalchemy import Connection, text
 
-from .common import CRITICAL, INFO, WARNING, Check
+from .common import INFO, WARNING, Check
 
 _COLOR_COLS = (
     "b_minus_v_mag", "u_minus_b_mag", "v_minus_r_mag", "r_minus_i_mag", "v_minus_i_mag",

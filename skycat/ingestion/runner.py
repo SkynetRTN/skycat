@@ -510,7 +510,7 @@ def import_release(
                         run.message = str(exc)
                         run.detail = detail
                 meta.commit()
-        except Exception:
+        except Exception:  # noqa: S110, BLE001 -- recording the failure must not mask the original error (re-raised below)
             pass
         report.state = CatalogReleaseState.FAILED.value
         raise IngestionError(str(exc)) from exc
