@@ -10,8 +10,6 @@ from .registry import (
     CatalogFamily,
     CatalogRelease,
     IngestionRun,
-    SourceFile,
-    SourceManifest,
     ValidationSummary,
 )
 from .stetson import STETSON_ID_SEQUENCE, StetsonSource
@@ -25,8 +23,6 @@ __all__ = [
     "IngestionRun",
     "LANDOLT_ID_SEQUENCE",
     "LandoltSource",
-    "SourceFile",
-    "SourceManifest",
     "STETSON_ID_SEQUENCE",
     "StetsonSource",
     "ValidationSummary",

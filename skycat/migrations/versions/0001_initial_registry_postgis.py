@@ -167,46 +167,8 @@ def upgrade() -> None:
     )
     op.create_index("ix_validation_summary_release_id", "validation_summary", ["release_id"], schema=REGISTRY)
 
-    op.create_table(
-        "source_manifest",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("release_id", sa.Integer(), nullable=False),
-        sa.Column("generated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column("root_path", sa.Text()),
-        sa.Column("file_count", sa.Integer()),
-        sa.Column("total_bytes", sa.BigInteger()),
-        sa.Column("checksum", sa.String(128)),
-        sa.Column("detail", postgresql.JSONB()),
-        sa.ForeignKeyConstraint(
-            ["release_id"], [f"{REGISTRY}.catalog_release.id"],
-            name="fk_source_manifest_release_id_catalog_release", ondelete="CASCADE",
-        ),
-        schema=REGISTRY,
-    )
-    op.create_index("ix_source_manifest_release_id", "source_manifest", ["release_id"], schema=REGISTRY)
-
-    op.create_table(
-        "source_file",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("manifest_id", sa.Integer(), nullable=False),
-        sa.Column("relative_path", sa.Text(), nullable=False),
-        sa.Column("role", sa.String(32)),
-        sa.Column("size_bytes", sa.BigInteger()),
-        sa.Column("checksum", sa.String(128)),
-        sa.Column("modified_at", sa.DateTime(timezone=True)),
-        sa.Column("detail", postgresql.JSONB()),
-        sa.ForeignKeyConstraint(
-            ["manifest_id"], [f"{REGISTRY}.source_manifest.id"],
-            name="fk_source_file_manifest_id_source_manifest", ondelete="CASCADE",
-        ),
-        schema=REGISTRY,
-    )
-    op.create_index("ix_source_file_manifest_id", "source_file", ["manifest_id"], schema=REGISTRY)
-
 
 def downgrade() -> None:
-    op.drop_table("source_file", schema=REGISTRY)
-    op.drop_table("source_manifest", schema=REGISTRY)
     op.drop_table("validation_summary", schema=REGISTRY)
     op.drop_table("ingestion_run", schema=REGISTRY)
     op.drop_constraint(
