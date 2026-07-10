@@ -9,6 +9,8 @@ returned ``separation_deg`` is a true angular separation.
 
 from __future__ import annotations
 
+import operator
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import Engine, select, text
@@ -25,6 +27,51 @@ from ..spatial import separation_deg_expr, validate_radec, within_radius
 
 class CatalogQueryError(RuntimeError):
     pass
+
+
+#: The only comparison operators a quality filter may use. Membership is checked
+#: before the clause is built, so a caller-supplied operator string never
+#: reaches the SQL.
+_QUALITY_OPERATORS = {
+    "=": operator.eq,
+    "!=": operator.ne,
+    "<": operator.lt,
+    "<=": operator.le,
+    ">": operator.gt,
+    ">=": operator.ge,
+}
+
+
+@dataclass(frozen=True)
+class QualityFilter:
+    """A ``column <op> value`` predicate over a release's data table.
+
+    Both identifiers are validated against allow-lists — ``column`` must name a
+    real non-spatial column of that table, ``op`` must be one of the six
+    comparisons above — and ``value`` is bound as a parameter rather than
+    interpolated. Callers may therefore build these from untrusted input.
+    """
+
+    column: str
+    op: str
+    value: float | int | str | bool
+
+
+def _quality_clause(table, qf: QualityFilter):
+    """Validate one filter against ``table`` and return its SQLAlchemy clause."""
+    if qf.column == "geom":
+        raise CatalogQueryError("Quality filters cannot target the spatial column 'geom'")
+    col = table.c.get(qf.column)
+    if col is None:
+        raise CatalogQueryError(f"Unknown quality-filter column {qf.column!r}")
+    try:
+        apply_op = _QUALITY_OPERATORS[qf.op]
+    except KeyError:
+        raise CatalogQueryError(
+            f"Unsupported quality-filter operator {qf.op!r}; allowed: "
+            + ", ".join(sorted(_QUALITY_OPERATORS))
+        ) from None
+    return apply_op(col, qf.value)
 
 
 @dataclass
@@ -87,14 +134,15 @@ def cone_search(
     mag_band: str | None = None,
     mag_min: float | None = None,
     mag_max: float | None = None,
-    quality_filter: str | None = None,
+    quality_filter: Sequence[QualityFilter] | None = None,
     role: CatalogRole = CatalogRole.READER,
     engine: Engine | None = None,
 ) -> list[dict]:
     """Return rows within ``radius_deg`` of (ra, dec), nearest first.
 
     ``mag_band`` filters on a typed magnitude column (e.g. ``johnson_v_mag``);
-    ``quality_filter`` is a raw SQL boolean over the row (advanced use).
+    ``quality_filter`` is a sequence of :class:`QualityFilter` predicates, each
+    ANDed onto the query after its column and operator are validated.
     """
     validate_radec(ra_deg, dec_deg)
     own_engine = engine is None
@@ -121,8 +169,8 @@ def cone_search(
                 stmt = stmt.where(col >= mag_min)
             if mag_max is not None:
                 stmt = stmt.where(col <= mag_max)
-        if quality_filter:
-            stmt = stmt.where(text(quality_filter))
+        for qf in quality_filter or ():
+            stmt = stmt.where(_quality_clause(table, qf))
         stmt = stmt.order_by(sep).limit(limit)
         with engine.connect() as conn:
             return [dict(row) for row in conn.execute(stmt).mappings()]
