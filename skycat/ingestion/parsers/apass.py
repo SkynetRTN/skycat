@@ -82,12 +82,15 @@ class ApassDr6Parser:
                     g = to_float(f[10])
                     r = to_float(f[11])
                     i = to_float(f[12])
-                    verr = to_float(f[13], missing_at_or_above=None)
-                    bverr = to_float(f[14], missing_at_or_above=None)
-                    berr = to_float(f[15], missing_at_or_above=None)
-                    gerr = to_float(f[16], missing_at_or_above=None)
-                    rerr = to_float(f[17], missing_at_or_above=None)
-                    ierr = to_float(f[18], missing_at_or_above=None)
+                    # Photometric errors honor the 99.999 -> NULL sentinel, matching
+                    # the DR6 magnitudes above and the DR10 errors (the positional
+                    # ra/dec errors keep missing_at_or_above=None, consistent with DR10).
+                    verr = to_float(f[13])
+                    bverr = to_float(f[14])
+                    berr = to_float(f[15])
+                    gerr = to_float(f[16])
+                    rerr = to_float(f[17])
+                    ierr = to_float(f[18])
                     extra = {
                         "mobs": mobs,
                         "b_minus_v_mag": bv,

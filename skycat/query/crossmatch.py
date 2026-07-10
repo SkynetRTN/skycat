@@ -9,6 +9,7 @@ nearest match(es) per input. No per-input round trips, no Python distance maths.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 
 from psycopg.types.json import Jsonb  # noqa: F401  (parity with loader adapters)
@@ -19,8 +20,10 @@ from ..config import CatalogRole, CatalogSettings
 from ..constants import POSTGIS_SPHERE_RADIUS_M, SCHEMA_DATA, SRID
 from ..database.base import CatalogBase
 from ..database.engine import create_catalog_engine
-from ..spatial import degrees_to_meters
+from ..spatial import degrees_to_meters, is_valid_dec, is_valid_ra
 from .cone import resolve_release_for_query
+
+logger = logging.getLogger(__name__)
 
 _QGEOM_EXPR = (
     "(ST_SetSRID(ST_MakePoint("
@@ -78,13 +81,31 @@ def batch_crossmatch(
             )
             driver = conn.connection.driver_connection
             n_inputs = 0
+            invalid_ids: list[str] = []
             with driver.cursor() as cur:
                 with cur.copy(
                     "COPY _xm_inputs (input_id, ra_deg, dec_deg) FROM STDIN"
                 ) as cp:
                     for input_id, ra, dec in inputs:
-                        cp.write_row((str(input_id), float(ra), float(dec)))
+                        ra_f, dec_f = float(ra), float(dec)
+                        # Validate BEFORE the COPY: an out-of-range Dec makes the
+                        # generated geography cast fail at COPY time and aborts the
+                        # entire batch transaction (opaque driver error, all
+                        # results lost); a >360 RA silently returns a wrong nearest
+                        # match. Skip-and-mark instead so one bad row can't sink the
+                        # batch — the skipped inputs come back as matched=False below.
+                        if not (is_valid_ra(ra_f) and is_valid_dec(dec_f)):
+                            invalid_ids.append(str(input_id))
+                            continue
+                        cp.write_row((str(input_id), ra_f, dec_f))
                         n_inputs += 1
+            if invalid_ids:
+                logger.warning(
+                    "batch_crossmatch: skipped %d input(s) with out-of-range "
+                    "coordinates (returned as matched=False); first: %s",
+                    len(invalid_ids),
+                    invalid_ids[:5],
+                )
 
             sql = text(
                 f"""
@@ -114,7 +135,18 @@ def batch_crossmatch(
                     "lim": limit,
                 },
             ).mappings()
-            return [dict(row) for row in rows]
+            results = [dict(row) for row in rows]
+            if invalid_ids:
+                # Represent every input: emit a matched=False row (catalog columns
+                # NULL) for each skipped input, same shape as a genuine no-match
+                # row, then re-sort so the by-input_id ordering contract holds.
+                null_cols = {n: None for n in cat_cols}
+                results.extend(
+                    {"input_id": iid, "matched": False, **null_cols, "separation_deg": None}
+                    for iid in invalid_ids
+                )
+                results.sort(key=lambda row: row["input_id"])
+            return results
     finally:
         if own_engine:
             engine.dispose()

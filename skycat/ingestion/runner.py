@@ -247,9 +247,8 @@ def import_release(
                 report.imported = int(release.imported_row_count or 0)
                 return report
 
-            if release.state == CatalogReleaseState.ACTIVE.value and not (
-                replace and force
-            ):
+            was_active = release.state == CatalogReleaseState.ACTIVE.value
+            if was_active and not (replace and force):
                 raise IngestionError(
                     f"Release {rel_def.name} is ACTIVE; re-importing requires --replace --force."
                 )
@@ -261,7 +260,12 @@ def import_release(
             release.source_size_bytes = discovered.total_bytes
             release.source_modified_at = discovered.latest_modified()
             release.expected_row_count = None
-            release.state = CatalogReleaseState.STAGING.value
+            # A --replace of the ACTIVE release stays ACTIVE and keeps serving its
+            # old partition right up to the atomic swap in Phase B; only non-active
+            # re-imports / first imports move to STAGING. This never leaves the
+            # family with no active release mid-rebuild.
+            if not was_active:
+                release.state = CatalogReleaseState.STAGING.value
             release.import_started_at = _now()
             release.failure_detail = None
             meta.commit()
@@ -322,49 +326,64 @@ def import_release(
                 )
             )
 
-        # --- Phase B: transform -> detached partition -> index -> attach ------
+        # --- Phase B: build a detached replacement, then atomically swap it in -
+        # The replacement is built as a standalone (unattached) table so the
+        # partition parent is NOT locked during the multi-minute rebuild and the
+        # existing partition keeps serving reads. Only the final swap (Phase B2)
+        # takes a brief ACCESS EXCLUSIVE on the parent — metadata-only DETACH/
+        # ATTACH; the redundant CHECK lets ATTACH skip its validation scan.
         child = _partition_name(data_table, release_id)
         child_fqn = f'{SCHEMA_DATA}."{child}"'
+        incoming = f"{child}_incoming"
+        incoming_fqn = f'{SCHEMA_DATA}."{incoming}"'
+        incoming_chk = f"{incoming}_relchk"
         data_cols = copy_loader.data_column_names(table)
         col_list = ", ".join(f'"{c}"' for c in data_cols)
 
+        # Phase B1 — transform + index + validate the detached replacement. Takes
+        # no lock on the partition parent (only the new standalone table).
         with engine.begin() as conn:
-            _drop_existing_partition(conn, data_table, release_id)
+            # Clear any leftover build from a crashed prior run before rebuilding.
+            conn.execute(text(f"DROP TABLE IF EXISTS {incoming_fqn}"))
             conn.execute(
                 text(
-                    f"CREATE TABLE {child_fqn} "
+                    f"CREATE TABLE {incoming_fqn} "
                     f'(LIKE {SCHEMA_DATA}."{data_table}" INCLUDING DEFAULTS INCLUDING GENERATED)'
                 )
             )
             conn.execute(
                 text(
-                    f"ALTER TABLE {child_fqn} ALTER COLUMN release_id SET DEFAULT {release_id}"
+                    f"ALTER TABLE {incoming_fqn} ALTER COLUMN release_id SET DEFAULT {release_id}"
                 )
             )
             # Transform: typed copy from valid staging rows (geom auto-generated).
             conn.execute(
                 text(
-                    f"INSERT INTO {child_fqn} ({col_list}) "
+                    f"INSERT INTO {incoming_fqn} ({col_list}) "
                     f"SELECT {col_list} FROM {staging_fqn} WHERE reject_reason IS NULL"
                 )
             )
             imported = conn.execute(
-                text(f"SELECT count(*) FROM {child_fqn}")
+                text(f"SELECT count(*) FROM {incoming_fqn}")
             ).scalar_one()
-            # Constrain + index (after load), then ANALYZE.
+            # Constrain + index (after load), then ANALYZE. The CHECK stays on the
+            # table through the swap so ATTACH can skip its partition scan.
             conn.execute(
                 text(
-                    f'ALTER TABLE {child_fqn} ADD CONSTRAINT "{child}_relchk" '
+                    f'ALTER TABLE {incoming_fqn} ADD CONSTRAINT "{incoming_chk}" '
                     f"CHECK (release_id = {release_id})"
                 )
             )
             conn.execute(
-                text(f"ALTER TABLE {child_fqn} ADD PRIMARY KEY (release_id, id)")
+                text(f"ALTER TABLE {incoming_fqn} ADD PRIMARY KEY (release_id, id)")
             )
-            _replicate_parent_indexes(conn, data_table, child)
-            conn.execute(text(f"ANALYZE {child_fqn}"))
-            prod_checks = validate_production(conn, SCHEMA_DATA, child)
+            _replicate_parent_indexes(conn, data_table, incoming)
+            conn.execute(text(f"ANALYZE {incoming_fqn}"))
+            prod_checks = validate_production(conn, SCHEMA_DATA, incoming)
             if summarize(prod_checks) == ValidationStatus.FAILED:
+                # Drop the failed build; the old partition is untouched and, for a
+                # --replace of an active release, the release is still ACTIVE.
+                conn.execute(text(f"DROP TABLE IF EXISTS {incoming_fqn}"))
                 raise IngestionError(
                     "Production validation failed: "
                     + "; ".join(
@@ -373,8 +392,15 @@ def import_release(
                         if not c.passed and c.level == "critical"
                     )
                 )
-            # Attach (fast: redundant CHECK lets PG skip the validation scan),
-            # then drop the now-redundant CHECK.
+
+        # Phase B2 — atomic swap. Short transaction: DETACH+DROP the old partition
+        # (if any), rename the validated replacement into the canonical partition
+        # name, and ATTACH it. The parent's ACCESS EXCLUSIVE lock is held only for
+        # these metadata operations, not the rebuild. DDL is transactional, so a
+        # failure here rolls the swap back and leaves the old partition serving.
+        with engine.begin() as conn:
+            _drop_existing_partition(conn, data_table, release_id)
+            conn.execute(text(f'ALTER TABLE {incoming_fqn} RENAME TO "{child}"'))
             conn.execute(
                 text(
                     f'ALTER TABLE {SCHEMA_DATA}."{data_table}" ATTACH PARTITION {child_fqn} '
@@ -382,7 +408,7 @@ def import_release(
                 )
             )
             conn.execute(
-                text(f'ALTER TABLE {child_fqn} DROP CONSTRAINT "{child}_relchk"')
+                text(f'ALTER TABLE {child_fqn} DROP CONSTRAINT "{incoming_chk}"')
             )
 
         checks += prod_checks
@@ -399,7 +425,14 @@ def import_release(
             release.imported_row_count = int(imported)
             release.rejected_row_count = rejected
             release.production_table = f"{SCHEMA_DATA}.{child}"
-            release.state = CatalogReleaseState.READY.value
+            # An in-place --replace of the ACTIVE release stays ACTIVE — the Phase
+            # B2 swap already put the new data live under the same release_id. A
+            # fresh/non-active release lands READY and is activated only on request.
+            release.state = (
+                CatalogReleaseState.ACTIVE.value
+                if was_active
+                else CatalogReleaseState.READY.value
+            )
             release.validation_status = final_status.value
             release.validated_at = _now()
             release.import_completed_at = _now()
@@ -423,9 +456,12 @@ def import_release(
                 "malformed_examples": stats.malformed_examples or [],
             }
             meta.commit()
-            report.state = CatalogReleaseState.READY.value
+            report.state = release.state
 
-            if activate:
+            if was_active:
+                # Already live via the Phase B2 swap; no supersede/activate step.
+                report.activated = True
+            elif activate:
                 if final_status == ValidationStatus.FAILED:
                     raise IngestionError("cannot activate: validation failed")
                 if (

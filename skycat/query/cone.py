@@ -222,6 +222,7 @@ def cone_search_plan(
     *, radius_deg: float, release: str | None = None, analyze: bool = False,
 ) -> str:
     """Return the EXPLAIN [ANALYZE] plan — used to demonstrate index usage."""
+    validate_radec(ra_deg, dec_deg)
     cfg = settings.config_for(CatalogRole.READER)
     cfg.assert_not_primary_database()
     engine = create_catalog_engine(cfg, pool_size=1, max_overflow=1)
