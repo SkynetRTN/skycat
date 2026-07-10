@@ -145,6 +145,19 @@ def test_batch_crossmatch(imported):
     assert not by_id["c"]["matched"]
 
 
+def test_batch_crossmatch_skips_invalid_inputs(imported):
+    # One valid input + one out-of-range (|dec| > 90). The bad input must NOT
+    # abort the batch — pre-fix it failed the generated-geography cast at COPY
+    # time and lost every result. It now comes back matched=False, and the good
+    # input still matches.
+    inputs = [("good", 100.0039, 4.861469), ("bad-dec", 100.0, 123.0)]
+    rows = batch_crossmatch(imported, "apass", inputs, radius_deg=30 / 3600.0)
+    by_id = {r["input_id"]: r for r in rows}
+    assert by_id["good"]["matched"] and by_id["good"]["native_id"] == "090-0000001"
+    assert by_id["bad-dec"]["matched"] is False
+    assert by_id["bad-dec"]["separation_deg"] is None
+
+
 def test_reader_is_read_only(imported):
     eng = _reader(imported)
     with eng.connect() as conn:
@@ -193,6 +206,57 @@ def test_active_release_deletion_protected(imported):
 def test_idempotent_reimport_skips(imported):
     report = import_release(imported, "apass", "dr6")  # no replace, unchanged source
     assert report.skipped_reason is not None
+
+
+def test_active_reimport_stays_active_and_swaps(imported):
+    # Re-import the already-ACTIVE DR10 in place. The reworked path builds the
+    # replacement detached then atomically swaps it, so the release must stay
+    # ACTIVE and keep serving (no no-active-release window), the partition is
+    # re-attached under the canonical name, and no detached build table is left
+    # behind. Leaves the same end state (DR10 active, DR6 superseded), so it is
+    # safe alongside the other fixture-shared tests.
+    before = cone_search(imported, "apass", 100.0039, 4.861469, radius_deg=0.5)
+    assert before  # DR10 active + queryable before the re-import
+
+    report = import_release(imported, "apass", "dr10", replace=True, force=True)
+    assert report.state == "active"
+    assert report.activated is True
+
+    eng = _reader(imported)
+    with eng.connect() as conn:
+        states = dict(
+            conn.execute(
+                text(
+                    "SELECT r.name, r.state FROM catalog_registry.catalog_release r "
+                    "JOIN catalog_registry.catalog_family f ON f.id=r.family_id "
+                    "WHERE f.slug='apass'"
+                )
+            ).all()
+        )
+        parts = set(
+            conn.execute(
+                text(
+                    "SELECT inhrelid::regclass::text FROM pg_inherits "
+                    "WHERE inhparent='catalog_data.apass_source'::regclass"
+                )
+            ).scalars()
+        )
+        leftover = conn.execute(
+            text(
+                "SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname='catalog_data' AND c.relname='apass_source_r2_incoming'"
+            )
+        ).scalar()
+    eng.dispose()
+
+    assert states["DR10"] == "active"  # stayed ACTIVE across the in-place replace
+    assert states["DR6"] == "superseded"
+    assert any(p.endswith("apass_source_r2") for p in parts)  # re-attached canonically
+    assert leftover is None  # the detached build table was renamed, not left behind
+
+    # Data still present + identical after the swap.
+    after = cone_search(imported, "apass", 100.0039, 4.861469, radius_deg=0.5)
+    assert after and after[0]["native_id"] == before[0]["native_id"]
 
 
 def test_staging_table_cleaned(imported):

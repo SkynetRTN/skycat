@@ -32,7 +32,7 @@ skycat = "skycat.cli.main:main_entry"
 
 [tool.pytest.ini_options]
 markers = [
-    "postgis: integration tests that require a live PostgreSQL/PostGIS catalog database (skipped unless SKYCAT_TEST_DSN or a reachable catalog DB is configured).",
+    "postgis: integration tests that require a live PostgreSQL/PostGIS catalog database (skipped unless the SKYCAT_DB_* environment points at a reachable catalog DB).",
 ]
 testpaths = ["tests"]
 
