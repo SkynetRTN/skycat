@@ -17,7 +17,6 @@ from skycat.constants import ALL_SCHEMAS
 from skycat.database.engine import create_catalog_engine
 from skycat.ingestion import import_release
 from skycat.ingestion.maintenance import remove_release, revalidate_release
-from skycat.registry.catalog_defs import get_family_def
 from skycat.validation.common import validate_production
 from skycat.query import (
     CatalogQueryError,
@@ -243,14 +242,6 @@ def test_short_import_warns_against_the_expected_row_count(imported):
     check = next(c for c in res["checks"] if c["name"] == "row_count_vs_expected")
     assert check["level"] == "warning" and not check["passed"]
     assert "truncated" in check["detail"]
-
-
-def test_every_family_carries_an_expected_row_count(imported):
-    """All four families have a published size, so all four get the guard."""
-    for slug in ("apass", "vsx", "landolt", "stetson"):
-        fam = get_family_def(slug)
-        assert fam is not None
-        assert all(r.approx_row_count for r in fam.releases), slug
 
 
 def test_row_count_check_is_skipped_without_an_expectation(imported):

@@ -20,8 +20,12 @@ CENTER = ["--ra", "100.0039", "--dec", "4.861469", "--radius-deg", "0.5"]
 
 
 @pytest.fixture
-def run(imported, monkeypatch):
-    """Invoke the CLI against the test database (settings come from the env)."""
+def run(imported):  # noqa: ARG001 -- requested to initialize + populate the DB
+    """Invoke the CLI, which reads SKYCAT_DB_* from the environment itself.
+
+    ``imported`` is depended on for its side effect (schemas, roles, migrations,
+    sample releases); the CLI builds its own settings, so its value is not used.
+    """
     runner = CliRunner()
 
     def _run(*args):

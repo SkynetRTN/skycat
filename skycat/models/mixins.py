@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from geoalchemy2 import Geography, WKBElement
-from sqlalchemy import Computed, DateTime, Double, String, func
+from sqlalchemy import Computed, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..constants import SRID
@@ -26,20 +26,11 @@ class TimestampMixin:
     )
 
 
-def native_id_column() -> Mapped[str]:
-    """Native source identifier (kept as text; not necessarily unique per row —
-    e.g. APASS DR6 field-block names repeat)."""
-    return mapped_column(String(64), nullable=False, index=True)
-
-
-def ra_deg_column() -> Mapped[float]:
-    return mapped_column("ra_deg", Double, nullable=False)
-
-
-def dec_deg_column() -> Mapped[float]:
-    return mapped_column("dec_deg", Double, nullable=False)
-
-
+# There are deliberately no native_id/ra_deg/dec_deg helpers here. Every family
+# declares those explicitly, because they vary: APASS native ids are String(64),
+# VSX's are String(32), and index choices differ per family. A one-size helper
+# was wrong for half of them and no model ever used it. `geom` is the opposite —
+# it must be identical everywhere, so it is the one that gets a helper.
 def geom_column() -> Mapped[WKBElement | None]:
     """The derived ``geography(Point,4326)`` GENERATED column.
 

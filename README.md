@@ -393,12 +393,14 @@ Using Tycho-2 as the worked example:
    release. Set `data_table`, the `source_subdir` / `data_globs` the discovery
    step looks for, and `approx_row_count` (the published size; validation warns
    when an import lands below 90% of it — see *Ingestion lifecycle*).
-2. **`models/tycho2.py`** — a typed model, `LIST (release_id)`-partitioned, using
-   `native_id_column()` / `ra_deg_column()` / `dec_deg_column()` / `geom_column()`
-   from `models/mixins.py`. Typed columns for principal magnitudes, errors and
-   coordinates; per-release oddities go in the `extra` JSONB rather than becoming
-   new columns. Unit-suffixed names (`johnson_v_mag`, `ra_err_arcsec`) — the repo
-   convention. Register it in `models/__init__.py`.
+2. **`models/tycho2.py`** — a typed model, `LIST (release_id)`-partitioned.
+   Declare `native_id` / `ra_deg` / `dec_deg` explicitly (they vary per family —
+   APASS native ids are `String(64)`, VSX's are `String(32)`), and take `geom`
+   from `models/mixins.geom_column()`, which every family must share. Typed
+   columns for principal magnitudes, errors and coordinates; per-release oddities
+   go in the `extra` JSONB rather than becoming new columns. Unit-suffixed names
+   (`johnson_v_mag`, `ra_err_arcsec`) — the repo convention. Copy the shape of
+   `models/apass.py` and register it in `models/__init__.py`.
 3. **`ingestion/parsers/tycho2.py`** — a streaming parser (subclass the base in
    `parsers/base.py`) yielding row tuples in a fixed column order. It must stream,
    never materialize: these files run to hundreds of millions of rows. Register

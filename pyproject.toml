@@ -47,6 +47,7 @@ line-length = 110
 # apps/sky-node-desktop/backend. skycat is greenfield and clean under this set.
 select = [
     "F",       # pyflakes (unused imports/names, real bugs)
+    "ARG",     # unused arguments — dead parameters outlive the code that fed them
     "BLE001",  # blind `except Exception`
     "S110",    # try-except-pass
     "S112",    # try-except-continue
