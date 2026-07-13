@@ -8,6 +8,11 @@ and configuration namespace (``SKYCAT_DB_*``).
 
 from __future__ import annotations
 
+from .client import (
+    DEFAULT_RELEASE_CACHE_TTL_S,
+    DEFAULT_STATEMENT_TIMEOUT_MS,
+    CatalogReader,
+)
 from .config import (
     CatalogConfigError,
     CatalogDatabaseConfig,
@@ -28,9 +33,12 @@ __version__ = "0.1.0"
 
 __all__ = [
     "ALL_SCHEMAS",
+    "DEFAULT_RELEASE_CACHE_TTL_S",
+    "DEFAULT_STATEMENT_TIMEOUT_MS",
     "CatalogBase",
     "CatalogConfigError",
     "CatalogDatabaseConfig",
+    "CatalogReader",
     "CatalogReleaseState",
     "CatalogRole",
     "CatalogSettings",

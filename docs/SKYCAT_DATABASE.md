@@ -11,12 +11,12 @@ The package and its full documentation live at
 [`packages/py/skycat/`](https://github.com/skynetrtn/skynet/tree/main/packages/py/skycat)
 (see its `README.md`). This page is the operator quick-reference.
 
-> **Bringing the local catalog online for the optical pipeline?** Follow the
-> step-by-step Phase-1 rollout runbook in
-> [`SKYCAT_LOCAL_ROLLOUT.md`](SKYCAT_LOCAL_ROLLOUT.md): install the worker
-> dependency, provision + initialise the DB, import/validate/activate APASS
-> DR6+DR10 and VSX, run the worker in strict local-only mode, and prove no
-> remote catalog access occurs.
+> **Bringing the local catalog online for the optical pipeline?** Not yet
+> possible: skycat has no pipeline consumer on this branch. The worker
+> integration — backend-selection modes, the fallback adapter, and the
+> step-by-step rollout runbook (`SKYCAT_LOCAL_ROLLOUT.md`) — arrives with the
+> pipeline-integration PR. Until then this page covers provisioning and
+> operating the catalog store itself.
 
 ## Architecture
 

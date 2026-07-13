@@ -24,6 +24,11 @@ class ReleaseDef:
     data_globs: tuple[str, ...] = ()
     # Optional files that are part of the release but not bulk data (readmes…).
     aux_globs: tuple[str, ...] = ()
+    # Approximate published row count. Validation warns when an import lands
+    # grossly short of it — the signature of a truncated or partially downloaded
+    # source, which otherwise parses cleanly and imports silently. Leave None
+    # where the expected size is not established; the check is then skipped.
+    approx_row_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,7 @@ CATALOG_FAMILIES: tuple[FamilyDef, ...] = (
                 source_format="apass_dr6_sum",
                 data_globs=("z[pm]*_6.sum",),
                 aux_globs=("*.zip",),
+                approx_row_count=42_602_815,
             ),
             ReleaseDef(
                 slug="dr10",
@@ -78,6 +84,7 @@ CATALOG_FAMILIES: tuple[FamilyDef, ...] = (
                 source_format="apass_dr10_txt",
                 data_globs=("z[pm]*.txt",),
                 aux_globs=("*.zip",),
+                approx_row_count=128_632_615,
             ),
         ),
     ),
@@ -98,6 +105,9 @@ CATALOG_FAMILIES: tuple[FamilyDef, ...] = (
                 source_format="vsx_dat",
                 data_globs=("vsx.dat",),
                 aux_globs=("ReadMe", "refs.dat*"),
+                # VSX is a living index that only grows; the floor catches a
+                # truncated download, never legitimate growth.
+                approx_row_count=10_300_000,
             ),
         ),
     ),
@@ -126,6 +136,7 @@ CATALOG_FAMILIES: tuple[FamilyDef, ...] = (
                 # table2.dat = the 526 standard stars (the only photometry table).
                 data_globs=("table2.dat",),
                 aux_globs=("ReadMe",),
+                approx_row_count=526,
             ),
             ReleaseDef(
                 slug="2009",
@@ -137,6 +148,7 @@ CATALOG_FAMILIES: tuple[FamilyDef, ...] = (
                 # UCAC2/2MASS ids) is auxiliary and not part of the remote row contract.
                 data_globs=("table2.dat",),
                 aux_globs=("ReadMe", "table5.dat"),
+                approx_row_count=595,
             ),
         ),
     ),
@@ -165,6 +177,7 @@ CATALOG_FAMILIES: tuple[FamilyDef, ...] = (
                 # and table1/tablea* are auxiliary observation metadata.
                 data_globs=("table4.dat",),
                 aux_globs=("ReadMe", "table2.dat", "table1.dat", "tablea*.dat"),
+                approx_row_count=4_890_000,
             ),
         ),
     ),

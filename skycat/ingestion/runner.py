@@ -230,7 +230,6 @@ def import_release(
                 CatalogReleaseState.ACTIVE.value,
                 CatalogReleaseState.READY.value,
                 CatalogReleaseState.SUPERSEDED.value,
-                CatalogReleaseState.DISABLED.value,
             )
             if (
                 not replace
@@ -259,7 +258,7 @@ def import_release(
             release.source_checksum = checksum
             release.source_size_bytes = discovered.total_bytes
             release.source_modified_at = discovered.latest_modified()
-            release.expected_row_count = None
+            release.expected_row_count = rel_def.approx_row_count
             # A --replace of the ACTIVE release stays ACTIVE and keeps serving its
             # old partition right up to the atomic swap in Phase B; only non-active
             # re-imports / first imports move to STAGING. This never leaves the
@@ -379,7 +378,12 @@ def import_release(
             )
             _replicate_parent_indexes(conn, data_table, incoming)
             conn.execute(text(f"ANALYZE {incoming_fqn}"))
-            prod_checks = validate_production(conn, SCHEMA_DATA, incoming)
+            prod_checks = validate_production(
+                conn,
+                SCHEMA_DATA,
+                incoming,
+                expected_row_count=rel_def.approx_row_count,
+            )
             if summarize(prod_checks) == ValidationStatus.FAILED:
                 # Drop the failed build; the old partition is untouched and, for a
                 # --replace of an active release, the release is still ACTIVE.

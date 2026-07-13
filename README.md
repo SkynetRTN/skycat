@@ -311,14 +311,13 @@ rather than dropped. Duplicate native ids are expected for Stetson (per-cluster
 | `init` | Create roles/PostGIS/grants/schemas + migrate (non-destructive) |
 | `migrate` / `migrate-status` | Apply / inspect Alembic migrations |
 | `health` | Comprehensive health report |
-| `families` / `register-family` | List / register catalog families |
+| `families` | List catalog families |
 | `discover` | Discover local source releases |
-| `register-release` | Register a release row |
-| `import <family> <release>` | Full ingest (discover→stage→load→validate→ready[→activate]) |
+| `import <family> <release>` | Full ingest (discover→stage→load→validate→ready[→activate]); registers the family and release itself |
 | `validate <family> <release>` | (Re)validate a release |
 | `activate` / `deactivate` | Atomically (de)activate a release |
 | `releases` / `history` | List releases / ingestion history |
-| `cone <family>` | Cone search (`--radius-deg/-arcmin/-arcsec`, `--release`, `--limit`) |
+| `cone <family>` | Cone search (`--radius-deg/-arcmin/-arcsec`, `--release`, `--limit`, `--order-by`) |
 | `crossmatch <family>` | Batch crossmatch from a CSV of `id,ra,dec` |
 | `lookup <family> <native_id>` | Native identifier lookup |
 | `sizes` | Table / index sizes |
@@ -346,8 +345,81 @@ production → mark READY → (explicit) ATTACH+ACTIVATE → record completion`.
 - Imports are idempotent on (family, release, source checksum, importer version,
   schema version). Malformed/duplicate rows are recorded with reasons, never
   silently dropped. Destructive replacement is never the default.
+- Where a release's published row count is known (`ReleaseDef.approx_row_count`),
+  an import landing grossly short of it **warns** and will not auto-activate
+  without `--allow-warnings`. This is the guard against a truncated download: a
+  short read of a multi-GB catalog still parses cleanly.
 
 See [docs](../../../docs) and the module docstrings for details.
+
+---
+
+## Release policy
+
+Releases are a **deployment mechanism, not a science dimension.** They exist so a
+DR upgrade is a safe, atomic, reversible operation — not so that callers can pick
+which data release to calibrate against.
+
+- **One active release per family** (enforced by a partial unique index).
+  Consumers never name a release; they get the active one. A DR upgrade is one
+  `skycat activate`, invisible to every consumer.
+- **Retain at most the previous (superseded) release** for rollback and for
+  re-deriving old calibrations. `remove-release` anything older once the new DR
+  has served for an agreed soak period. Do not plan for N simultaneously-live
+  DRs.
+- **`--release` is an ops and parity-testing affordance** — rolling back, or
+  comparing the local store against a remote provider that mirrors an older
+  release (VizieR serves Landolt 1992 while 2009 is active). It is **not**
+  exposed through the public API. The active release id may be *returned* for
+  reproducibility; if a science case ever genuinely needs pinned releases, add it
+  then.
+
+Blue/green is the point: stage DR11 beside a live DR10, validate it fully,
+activate atomically, and roll back by re-activating the superseded release. For a
+store that feeds photometric calibration, a botched import must never degrade the
+pipeline.
+
+---
+
+## Adding a catalog family
+
+Six touch points, each small and each in the obviously-named place. There is
+deliberately **no** plugin descriptor or registration framework — the cost of a
+new family is low enough that indirection would cost more than it saves.
+
+Using Tycho-2 as the worked example:
+
+1. **`registry/catalog_defs.py`** — a `FamilyDef` with one `ReleaseDef` per data
+   release. Set `data_table`, the `source_subdir` / `data_globs` the discovery
+   step looks for, and `approx_row_count` (the published size; validation warns
+   when an import lands below 90% of it — see *Ingestion lifecycle*).
+2. **`models/tycho2.py`** — a typed model, `LIST (release_id)`-partitioned, using
+   `native_id_column()` / `ra_deg_column()` / `dec_deg_column()` / `geom_column()`
+   from `models/mixins.py`. Typed columns for principal magnitudes, errors and
+   coordinates; per-release oddities go in the `extra` JSONB rather than becoming
+   new columns. Unit-suffixed names (`johnson_v_mag`, `ra_err_arcsec`) — the repo
+   convention. Register it in `models/__init__.py`.
+3. **`ingestion/parsers/tycho2.py`** — a streaming parser (subclass the base in
+   `parsers/base.py`) yielding row tuples in a fixed column order. It must stream,
+   never materialize: these files run to hundreds of millions of rows. Register
+   the `source_format` key in `parsers/__init__.py`.
+4. **A migration** — `skycat/migrations/versions/000N_tycho2.py`, creating the
+   partitioned parent + the generated `geom` column. Copy the shape of
+   `0002_apass.py`; reuse `GEOM_GENERATED_EXPR` rather than re-typing the
+   expression.
+5. **`validation/tycho2.py`** *(optional)* — family-specific staging checks
+   (implausible magnitudes, required bands), registered in
+   `validation/__init__.py`'s `_FAMILY_VALIDATORS`. A family with no entry simply
+   gets no extra checks. The catalog-independent ones (coordinate ranges, null
+   ids, row counts, spatial index) come free from `validation/common.py`.
+6. **Tests + the family table at the top of this README.** Commit a small sample
+   fixture under `tests/data/` and add the family to the `imported` fixture in
+   `tests/conftest.py`; the existing spatial/cone/crossmatch tests then cover it.
+
+Nothing in the generic engine — discovery, checksums, COPY into staging,
+validate-and-mark, the detached partition build, the atomic `ATTACH` swap, the
+registry lifecycle — needs to change. That is the whole point of it being
+generic.
 
 ---
 
@@ -366,18 +438,43 @@ See [docs](../../../docs) and the module docstrings for details.
 
 ## Testing
 
+> ⚠️ **Never point the integration tests at a catalog database you care about.**
+> The `imported` fixture runs `initialize_catalog_database()` and then
+> `import_release(..., replace=True, force=True)` for every family — against a
+> provisioned store (e.g. the Compose DB on 5433, which may hold a real 128M-row
+> APASS DR10) that **overwrites real releases with six-row samples**. Use a
+> throwaway database, as below.
+
 ```bash
 # unit tests (no DB needed)
 pytest packages/py/skycat/tests -q -m "not postgis"
-
-# integration tests against a real PostGIS (point at the Compose catalog DB)
-export SKYCAT_TEST_DSN=postgresql+psycopg://catalog_admin:...@127.0.0.1:5433/catalogs
-pytest packages/py/skycat/tests -q
 ```
 
-Integration tests use a real PostgreSQL/PostGIS database (never SQLite) for
-anything touching PostGIS, schemas, roles, COPY, partitioning, or spatial
-indexes. They are skipped automatically when no catalog DB is reachable.
+```bash
+# integration tests: disposable PostGIS on a port of its own (not 5433)
+docker run -d --rm --name skycat-test-pg \
+  -e POSTGRES_USER=catalog_admin -e POSTGRES_PASSWORD=catalog \
+  -e POSTGRES_DB=catalogs -p 127.0.0.1:5434:5432 \
+  --tmpfs /var/lib/postgresql/data \
+  skycat-postgres:latest
+
+export SKYCAT_DB_HOST=127.0.0.1 SKYCAT_DB_PORT=5434 SKYCAT_DB_NAME=catalogs
+export SKYCAT_DB_BOOTSTRAP_USER=catalog_admin SKYCAT_DB_BOOTSTRAP_PASSWORD=catalog
+export SKYCAT_DB_ADMIN_USER=catalog_owner    SKYCAT_DB_ADMIN_PASSWORD=catalog
+export SKYCAT_DB_INGEST_USER=catalog_ingest  SKYCAT_DB_INGEST_PASSWORD=catalog
+export SKYCAT_DB_READER_USER=catalog_reader  SKYCAT_DB_READER_PASSWORD=catalog
+export SKYCAT_DB_USER=catalog_reader         SKYCAT_DB_PASSWORD=catalog
+
+skycat init                          # roles + PostGIS + migrations
+pytest packages/py/skycat/tests -q   # fixtures import the sample releases
+
+docker stop skycat-test-pg           # tmpfs + --rm: nothing survives
+```
+
+Integration tests (marker `postgis`) use a real PostgreSQL/PostGIS database
+(never SQLite) for anything touching PostGIS, schemas, roles, COPY, partitioning,
+or spatial indexes. They are **skipped automatically** when no catalog DB is
+reachable — so an unset `SKYCAT_DB_*` gives you the unit suite, not a failure.
 
 ---
 
@@ -412,14 +509,38 @@ after the Skycat Jobs are verified.
 
 ## Consumers
 
-The Skynet **optical pipeline** consumes this package as the *local-first*
-backend for its catalog providers (APASS, VSX, Landolt, Stetson): cone searches,
-native-id lookup, and batch crossmatch are served from here via the read-only
-`catalog_reader` role, falling back to remote VizieR when the local store is
-unavailable or a catalog isn't imported locally. The integration lives behind the existing
-provider interface (no PostGIS/SQLAlchemy leaks into the pipeline) — see
-`packages/py/skynet-db/.../optical_data_processing/catalogs/local/README.md`
-for backend-selection modes (`SKYCAT_BACKEND`), field mappings, and
-failure/health behaviour. The query API it uses (`cone_search`,
-`lookup_native_id`, `batch_crossmatch`) accepts an optional caller-managed
-`engine=` so a long-lived worker reuses one pooled connection.
+**Skycat has no consumers yet** — the optical-pipeline integration is a separate,
+forthcoming PR. This section describes the interface consumers will use, so the
+first one does not invent its own.
+
+Use `CatalogReader`, not the query functions directly. It owns a pooled reader
+engine, caches each family's active release (60s TTL — activation is rare), and
+applies a default `statement_timeout` so one pathological query cannot wedge a
+worker:
+
+```python
+from skycat import CatalogReader
+
+reader = CatalogReader.from_env()          # hold this at app / worker scope
+stars = reader.cone("apass", ra, dec, radius_arcmin=12,
+                    order_by="johnson_v_mag", limit=500)   # brightest first
+hits = reader.crossmatch("vsx", [(id_, ra, dec), ...], radius_arcsec=5)
+row = reader.lookup("apass", "090-0000001")
+```
+
+**Pass `order_by` whenever you also pass `limit`.** The default ordering is by
+angular separation, so a capped cone returns the stars nearest the *centre* — in
+a dense field that is a different, fainter star set than the brightest N, and for
+photometric calibration it biases the fit. Ordering by a magnitude column
+(ascending = brightest) is what nearly every consumer actually wants.
+
+**Direct DB vs the public API.** Anything in-cluster and Python (the pipeline,
+schedulers, workers) uses this package directly over the `catalog_reader` role —
+no HTTP hop, pooled connections. Anything remote or non-Python (browsers, the
+SDKs, SkyNodes at telescope sites) goes through the public API. All SQL and
+PostGIS stays inside this package; consumers speak (family, ra, dec, radius,
+band, order, limit).
+
+The underlying functions (`cone_search`, `lookup_native_id`, `batch_crossmatch`)
+remain available and accept a caller-managed `engine=`, but `CatalogReader` is
+the supported entry point.

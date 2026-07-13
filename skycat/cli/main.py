@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import csv
 import json as jsonlib
-import sys
 from contextlib import contextmanager
 
 import click
@@ -30,15 +29,12 @@ from ..ingestion.maintenance import (
 from ..registry import (
     activate_release,
     deactivate_release,
-    get_or_create_release,
     list_families,
     list_releases,
-    register_family,
     resolve_release,
-    sync_all_families,
 )
-from ..registry.catalog_defs import get_family_def
 from ..query import (
+    CatalogQueryError,
     batch_crossmatch,
     cone_search,
     cone_search_plan,
@@ -66,7 +62,29 @@ def _session(settings, role: CatalogRole):
         engine.dispose()
 
 
-@click.group()
+class _ConfigException(click.ClickException):
+    exit_code = 2
+
+
+class _FriendlyGroup(click.Group):
+    """Render operator-input errors as messages rather than tracebacks.
+
+    Lives on the group (not the console-script wrapper) so it applies to every
+    entry point — ``skycat``, ``python -m skycat``, and CliRunner in the tests.
+    """
+
+    def invoke(self, ctx: click.Context):
+        try:
+            return super().invoke(ctx)
+        except CatalogConfigError as exc:
+            raise _ConfigException(str(exc)) from exc
+        except CatalogQueryError as exc:
+            # Unknown family/column, no active release, bad filter — the caller
+            # asked for something that does not exist, not a bug.
+            raise click.ClickException(str(exc)) from exc
+
+
+@click.group(cls=_FriendlyGroup)
 @click.option("--json", "json_out", is_flag=True, help="Machine-readable JSON output.")
 @click.pass_context
 def main(ctx: click.Context, json_out: bool) -> None:
@@ -188,29 +206,6 @@ def families(ctx):
     _emit(ctx, data, human)
 
 
-@main.command("register-family")
-@click.argument("slug")
-@click.pass_context
-def register_family_cmd(ctx, slug):
-    """Register/refresh a known catalog family."""
-    with _session(ctx.obj["settings"], CatalogRole.INGEST) as session:
-        fam = register_family(session, slug)
-        session.commit()
-        data = {"slug": fam.slug, "id": fam.id}
-    _emit(ctx, data, f"registered family {data['slug']} (id={data['id']})")
-
-
-@main.command("register-all-families")
-@click.pass_context
-def register_all_families(ctx):
-    """Register/refresh every known catalog family."""
-    with _session(ctx.obj["settings"], CatalogRole.INGEST) as session:
-        fams = sync_all_families(session)
-        session.commit()
-        data = [f.slug for f in fams]
-    _emit(ctx, data, "registered: " + ", ".join(data))
-
-
 # ------------------------------------------------------------------- discover
 @main.command()
 @click.argument("family", required=False)
@@ -242,36 +237,6 @@ def discover(ctx, family, release, source_dir):
         for d in data
     )
     _emit(ctx, data, human)
-
-
-@main.command("register-release")
-@click.argument("family")
-@click.argument("release")
-@click.pass_context
-def register_release_cmd(ctx, family, release):
-    """Register a release row (no import)."""
-    fam_def = get_family_def(family)
-    rel_def = fam_def.release(release) if fam_def else None
-    if rel_def is None:
-        raise click.ClickException(f"Unknown release {family}/{release}")
-    with _session(ctx.obj["settings"], CatalogRole.INGEST) as session:
-        fam = register_family(session, family)
-        session.commit()
-        rel = get_or_create_release(
-            session, fam, name=rel_def.name, version=rel_def.version
-        )
-        session.commit()
-        data = {
-            "family": family,
-            "release": rel.name,
-            "state": str(rel.state),
-            "id": rel.id,
-        }
-    _emit(
-        ctx,
-        data,
-        f"registered release {family}/{data['release']} (state={data['state']})",
-    )
 
 
 # --------------------------------------------------------------------- import
@@ -479,6 +444,12 @@ def history(ctx, family):
 @click.option("--mag-min", type=float, default=None)
 @click.option("--mag-max", type=float, default=None)
 @click.option(
+    "--order-by",
+    default=None,
+    help="Numeric column to sort by, ascending (default: angular separation). "
+    "A magnitude column gives brightest-first, e.g. johnson_v_mag.",
+)
+@click.option(
     "--explain", is_flag=True, help="Show the query plan (proves index usage)."
 )
 @click.pass_context
@@ -495,6 +466,7 @@ def cone(
     mag_band,
     mag_min,
     mag_max,
+    order_by,
     explain,
 ):
     """Cone search a catalog family."""
@@ -503,7 +475,10 @@ def cone(
         radius_deg=radius_deg, radius_arcmin=radius_arcmin, radius_arcsec=radius_arcsec
     )
     if explain:
-        plan = cone_search_plan(s, family, ra, dec, radius_deg=rdeg, release=release)
+        plan = cone_search_plan(
+            s, family, ra, dec, radius_deg=rdeg, release=release,
+            order_by=order_by, limit=limit,
+        )
         _emit(ctx, {"plan": plan}, plan)
         return
     rows = cone_search(
@@ -517,6 +492,7 @@ def cone(
         mag_band=mag_band,
         mag_min=mag_min,
         mag_max=mag_max,
+        order_by=order_by,
     )
     human = f"{len(rows)} matches\n" + "\n".join(
         f"  {r.get('native_id'):20} ra={r['ra_deg']:.6f} dec={r['dec_deg']:.6f} "
@@ -632,12 +608,8 @@ def reset(ctx, force, allow_production):
     _emit(ctx, {"reset": True}, "catalog schemas dropped; run `init` to rebuild")
 
 
-def main_entry() -> None:  # console-script wrapper with friendly errors
-    try:
-        main(obj={})
-    except CatalogConfigError as exc:
-        click.echo(f"error: {exc}", err=True)
-        sys.exit(2)
+def main_entry() -> None:  # console-script entry point
+    main(obj={})
 
 
 if __name__ == "__main__":

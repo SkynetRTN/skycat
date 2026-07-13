@@ -61,8 +61,10 @@ def fixture_data_root(tmp_path_factory) -> Path:
 def pg(settings) -> CatalogSettings:
     if not _reachable(settings):
         pytest.skip(
-            "no reachable catalog PostGIS database — set SKYCAT_DB_* "
-            "(e.g. the Compose skycat-postgres on 127.0.0.1:5433)"
+            "no reachable catalog PostGIS database — point SKYCAT_DB_* at a "
+            "THROWAWAY PostGIS (see README > Testing). Never a provisioned "
+            "catalog store: the `imported` fixture replaces every release with "
+            "six-row samples."
         )
     return settings
 

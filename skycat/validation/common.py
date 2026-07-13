@@ -80,11 +80,41 @@ def validate_staging_common(conn: Connection, staging_fqn: str) -> tuple[list[Ch
     return checks, valid, rejected
 
 
-def validate_production(conn: Connection, schema: str, table: str) -> list[Check]:
-    """Post-load production checks: rows present, spatial index present."""
+#: An import landing below this fraction of the release's published size is
+#: treated as suspect. Loose enough to absorb legitimate drift (rejected rows,
+#: a re-released source), tight enough to catch a half-downloaded file.
+ROW_COUNT_MIN_FRACTION = 0.9
+
+
+def validate_production(
+    conn: Connection,
+    schema: str,
+    table: str,
+    *,
+    expected_row_count: int | None = None,
+) -> list[Check]:
+    """Post-load production checks: rows present, spatial index present.
+
+    When ``expected_row_count`` is known, a grossly short import raises a
+    warning — which blocks auto-activation unless ``--allow-warnings``. This is
+    the guard against a truncated source: a short read of a multi-GB catalog
+    still parses cleanly and would otherwise import, validate and activate as a
+    silently incomplete release.
+    """
     checks: list[Check] = []
     rows = _count(conn, f'SELECT count(*) FROM "{schema}"."{table}"')
     checks.append(Check("production_rows", CRITICAL, rows > 0, f"{rows} rows in {schema}.{table}"))
+
+    if expected_row_count:
+        floor = int(expected_row_count * ROW_COUNT_MIN_FRACTION)
+        short = rows < floor
+        # Only a shortfall is suspect; a catalog gaining rows is normal and the
+        # expected count is deliberately approximate.
+        checks.append(Check(
+            "row_count_vs_expected", WARNING, not short,
+            f"{rows} rows vs ~{expected_row_count} expected"
+            + (f" (below {floor}; source may be truncated)" if short else ""),
+        ))
 
     has_gist = conn.execute(text(
         "SELECT count(*) FROM pg_indexes WHERE schemaname = :s AND tablename = :t "

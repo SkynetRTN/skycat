@@ -143,9 +143,14 @@ def revalidate_release(
                 )
             schema, _, tbl = release.production_table.partition(".")
             release_id = release.id
+            # Recorded at import from the family def; re-checked here so a
+            # truncated release stays flagged on every revalidation.
+            expected_rows = release.expected_row_count
 
         with engine.connect() as conn:
-            checks = validate_production(conn, schema, tbl)
+            checks = validate_production(
+                conn, schema, tbl, expected_row_count=expected_rows
+            )
             bad_ra = (
                 conn.execute(
                     text(

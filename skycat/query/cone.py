@@ -12,6 +12,7 @@ from __future__ import annotations
 import operator
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 
 from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
@@ -74,6 +75,32 @@ def _quality_clause(table, qf: QualityFilter):
     return apply_op(col, qf.value)
 
 
+def _order_by_clause(table, order_by: str):
+    """Validate ``order_by`` against ``table`` and return its ordering clause.
+
+    Ascending on a magnitude column is brightest-first, which is what a capped
+    cone search almost always wants: nearest-N and brightest-N return different
+    star sets in a dense field, and consumers (finder charts, saturation models,
+    photometric calibration) care about the brightest. Rows with no value sort
+    last rather than displacing real matches.
+    """
+    if order_by == "geom":
+        raise CatalogQueryError("Cannot order by the spatial column 'geom'")
+    col = table.c.get(order_by)
+    if col is None:
+        raise CatalogQueryError(f"Unknown order-by column {order_by!r}")
+    try:
+        py_type = col.type.python_type
+    except NotImplementedError:  # pragma: no cover - non-scalar column types
+        py_type = None
+    if py_type not in (int, float, Decimal):
+        raise CatalogQueryError(
+            f"Order-by column {order_by!r} is not numeric; ordering is only "
+            "supported on numeric columns (e.g. johnson_v_mag)"
+        )
+    return col.asc().nulls_last()
+
+
 @dataclass
 class ResolvedRelease:
     family_slug: str
@@ -134,15 +161,26 @@ def cone_search(
     mag_band: str | None = None,
     mag_min: float | None = None,
     mag_max: float | None = None,
+    order_by: str | None = None,
     quality_filter: Sequence[QualityFilter] | None = None,
     role: CatalogRole = CatalogRole.READER,
     engine: Engine | None = None,
+    resolved: ResolvedRelease | None = None,
 ) -> list[dict]:
-    """Return rows within ``radius_deg`` of (ra, dec), nearest first.
+    """Return rows within ``radius_deg`` of (ra, dec), nearest first by default.
 
     ``mag_band`` filters on a typed magnitude column (e.g. ``johnson_v_mag``);
     ``quality_filter`` is a sequence of :class:`QualityFilter` predicates, each
     ANDed onto the query after its column and operator are validated.
+
+    ``order_by`` names a numeric column to sort ascending (NULLs last, angular
+    separation as tiebreak) instead of sorting by separation. Passing a
+    magnitude column gives brightest-first selection, so a ``limit`` keeps the
+    brightest stars in the cone rather than the ones nearest its center.
+
+    Pass ``resolved`` to skip the registry lookup when the caller already knows
+    the release (see :class:`skycat.client.CatalogReader`, which caches it); it
+    takes precedence over ``release``.
     """
     validate_radec(ra_deg, dec_deg)
     own_engine = engine is None
@@ -151,8 +189,9 @@ def cone_search(
         cfg.assert_not_primary_database()
         engine = create_catalog_engine(cfg, pool_size=2, max_overflow=2)
     try:
-        with Session(engine) as session:
-            resolved = resolve_release_for_query(session, family_slug, release)
+        if resolved is None:
+            with Session(engine) as session:
+                resolved = resolve_release_for_query(session, family_slug, release)
         table = _data_table(resolved.data_table)
         out_cols = [c for c in table.c if c.name != "geom"]
         sep = separation_deg_expr(table.c.geom, ra_deg, dec_deg).label("separation_deg")
@@ -171,7 +210,10 @@ def cone_search(
                 stmt = stmt.where(col <= mag_max)
         for qf in quality_filter or ():
             stmt = stmt.where(_quality_clause(table, qf))
-        stmt = stmt.order_by(sep).limit(limit)
+        order = (
+            (_order_by_clause(table, order_by), sep) if order_by else (sep,)
+        )
+        stmt = stmt.order_by(*order).limit(limit)
         with engine.connect() as conn:
             return [dict(row) for row in conn.execute(stmt).mappings()]
     finally:
@@ -188,11 +230,14 @@ def lookup_native_id(
     limit: int = 100,
     role: CatalogRole = CatalogRole.READER,
     engine: Engine | None = None,
+    resolved: ResolvedRelease | None = None,
 ) -> list[dict]:
     """Return rows whose ``native_id`` matches, for the resolved release.
 
     Pass ``engine`` to reuse a caller-managed (pooled) engine; it is left open.
-    When omitted, a short-lived engine is created and disposed here.
+    When omitted, a short-lived engine is created and disposed here. Pass
+    ``resolved`` to skip the registry lookup; it takes precedence over
+    ``release``.
     """
     own_engine = engine is None
     if engine is None:
@@ -200,8 +245,9 @@ def lookup_native_id(
         cfg.assert_not_primary_database()
         engine = create_catalog_engine(cfg, pool_size=1, max_overflow=1)
     try:
-        with Session(engine) as session:
-            resolved = resolve_release_for_query(session, family_slug, release)
+        if resolved is None:
+            with Session(engine) as session:
+                resolved = resolve_release_for_query(session, family_slug, release)
         table = _data_table(resolved.data_table)
         out_cols = [c for c in table.c if c.name != "geom"]
         stmt = (
@@ -219,9 +265,16 @@ def lookup_native_id(
 
 def cone_search_plan(
     settings: CatalogSettings, family_slug: str, ra_deg: float, dec_deg: float,
-    *, radius_deg: float, release: str | None = None, analyze: bool = False,
+    *, radius_deg: float, release: str | None = None, order_by: str | None = None,
+    limit: int = 50, analyze: bool = False,
 ) -> str:
-    """Return the EXPLAIN [ANALYZE] plan — used to demonstrate index usage."""
+    """Return the EXPLAIN [ANALYZE] plan — used to demonstrate index usage.
+
+    Mirrors :func:`cone_search`'s ordering: the two orderings produce materially
+    different plans (a magnitude sort adds a top-N sort over the cone's candidate
+    rows), so explaining a nearest-first query would misrepresent what a
+    brightest-first one actually does.
+    """
     validate_radec(ra_deg, dec_deg)
     cfg = settings.config_for(CatalogRole.READER)
     cfg.assert_not_primary_database()
@@ -231,11 +284,14 @@ def cone_search_plan(
             resolved = resolve_release_for_query(session, family_slug, release)
         table = _data_table(resolved.data_table)
         sep = separation_deg_expr(table.c.geom, ra_deg, dec_deg).label("separation_deg")
+        order = (
+            (_order_by_clause(table, order_by), sep) if order_by else (sep,)
+        )
         stmt = (
             select(table.c.id, sep)
             .where(table.c.release_id == resolved.release_id)
             .where(within_radius(table.c.geom, ra_deg, dec_deg, radius_deg))
-            .order_by(sep).limit(50)
+            .order_by(*order).limit(limit)
         )
         compiled = stmt.compile(engine, compile_kwargs={"literal_binds": True})
         prefix = "EXPLAIN (ANALYZE, BUFFERS) " if analyze else "EXPLAIN "

@@ -12,24 +12,22 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 
-from psycopg.types.json import Jsonb  # noqa: F401  (parity with loader adapters)
 from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from ..config import CatalogRole, CatalogSettings
-from ..constants import POSTGIS_SPHERE_RADIUS_M, SCHEMA_DATA, SRID
+from ..constants import POSTGIS_SPHERE_RADIUS_M, SCHEMA_DATA
 from ..database.base import CatalogBase
 from ..database.engine import create_catalog_engine
-from ..spatial import degrees_to_meters, is_valid_dec, is_valid_ra
-from .cone import resolve_release_for_query
+from ..spatial import (
+    GEOM_GENERATED_EXPR,
+    degrees_to_meters,
+    is_valid_dec,
+    is_valid_ra,
+)
+from .cone import ResolvedRelease, resolve_release_for_query
 
 logger = logging.getLogger(__name__)
-
-_QGEOM_EXPR = (
-    "(ST_SetSRID(ST_MakePoint("
-    "CASE WHEN ra_deg > 180 THEN ra_deg - 360 ELSE ra_deg END, dec_deg), "
-    f"{SRID}))::geography"
-)
 
 
 def batch_crossmatch(
@@ -43,6 +41,7 @@ def batch_crossmatch(
     max_candidates: int = 1,
     role: CatalogRole = CatalogRole.READER,
     engine: Engine | None = None,
+    resolved: ResolvedRelease | None = None,
 ) -> list[dict]:
     """Crossmatch ``inputs`` (``(input_id, ra_deg, dec_deg)``) against a release.
 
@@ -51,7 +50,9 @@ def batch_crossmatch(
     deterministic: by ``input_id`` then ascending separation.
 
     Pass ``engine`` to reuse a caller-managed (pooled) engine; it is left open.
-    When omitted, a short-lived engine is created and disposed here.
+    When omitted, a short-lived engine is created and disposed here. Pass
+    ``resolved`` to skip the registry lookup; it takes precedence over
+    ``release``.
     """
     own_engine = engine is None
     if engine is None:
@@ -61,8 +62,9 @@ def batch_crossmatch(
     limit = 1 if nearest_only else max(1, max_candidates)
     radius_m = degrees_to_meters(radius_deg)
     try:
-        with Session(engine) as session:
-            resolved = resolve_release_for_query(session, family_slug, release)
+        if resolved is None:
+            with Session(engine) as session:
+                resolved = resolve_release_for_query(session, family_slug, release)
         table = CatalogBase.metadata.tables[f"{SCHEMA_DATA}.{resolved.data_table}"]
         cat_cols = [c.name for c in table.c if c.name != "geom"]
         inner_cols = ", ".join(f'c."{n}"' for n in cat_cols)
@@ -75,7 +77,7 @@ def batch_crossmatch(
                     input_id text,
                     ra_deg double precision,
                     dec_deg double precision,
-                    qgeom geography(Point,4326) GENERATED ALWAYS AS ({_QGEOM_EXPR}) STORED
+                    qgeom geography(Point,4326) GENERATED ALWAYS AS ({GEOM_GENERATED_EXPR}) STORED
                 ) ON COMMIT DROP
                 """
             )

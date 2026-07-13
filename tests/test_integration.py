@@ -16,8 +16,16 @@ from skycat.config import CatalogConfigError, CatalogRole
 from skycat.constants import ALL_SCHEMAS
 from skycat.database.engine import create_catalog_engine
 from skycat.ingestion import import_release
-from skycat.ingestion.maintenance import remove_release
-from skycat.query import batch_crossmatch, cone_search, lookup_native_id
+from skycat.ingestion.maintenance import remove_release, revalidate_release
+from skycat.registry.catalog_defs import get_family_def
+from skycat.validation.common import validate_production
+from skycat.query import (
+    CatalogQueryError,
+    batch_crossmatch,
+    cone_search,
+    cone_search_plan,
+    lookup_native_id,
+)
 from skycat.spatial import angular_separation_deg
 
 pytestmark = pytest.mark.postgis
@@ -129,6 +137,164 @@ def test_cone_uses_spatial_index(imported):
         )
     eng.dispose()
     assert "Index Scan" in plan or "Bitmap Index Scan" in plan or "gist" in plan.lower()
+
+
+def test_brightest_first_still_uses_the_spatial_index(imported):
+    """order_by must not cost the cone its index.
+
+    The magnitude sort applies to the cone's candidate rows, not the table: the
+    GiST index still does the filtering, so brightest-first stays viable on a
+    128M-row release.
+    """
+    from skycat.spatial import degrees_to_meters
+
+    eng = _reader(imported)
+    radius_m = degrees_to_meters(0.5)
+    with eng.connect() as conn:
+        rid = conn.execute(
+            text(
+                "SELECT r.id FROM catalog_registry.catalog_release r "
+                "JOIN catalog_registry.catalog_family f ON f.id=r.family_id "
+                "WHERE f.slug='apass' AND r.state='active'"
+            )
+        ).scalar()
+        conn.exec_driver_sql("SET LOCAL enable_seqscan = off")
+        plan = "\n".join(
+            row[0]
+            for row in conn.execute(
+                text(
+                    f"EXPLAIN SELECT id FROM catalog_data.apass_source "
+                    f"WHERE release_id = {rid} AND ST_DWithin(geom, "
+                    f"ST_SetSRID(ST_MakePoint(100.0039, 4.861469),4326)::geography, "
+                    f"{radius_m}, false) "
+                    f"ORDER BY johnson_v_mag ASC NULLS LAST LIMIT 500"
+                )
+            ).all()
+        )
+    eng.dispose()
+    assert "Index Scan" in plan or "Bitmap Index Scan" in plan or "gist" in plan.lower()
+
+
+def test_cone_order_by_selects_brightest_not_nearest(imported):
+    """Under a limit, brightest-first and nearest-first return different stars.
+
+    In the DR10 fixture the brightest source in the cone (090-0000004, V=14.251)
+    is also the *farthest* from the centre, so a nearest-N cap drops it — the
+    calibration-parity failure order_by exists to prevent.
+    """
+    center = (100.0039, 4.861469)
+    kwargs = {"radius_deg": 0.5, "limit": 3}
+    nearest = cone_search(imported, "apass", *center, **kwargs)
+    brightest = cone_search(
+        imported, "apass", *center, order_by="johnson_v_mag", **kwargs
+    )
+
+    seps = [r["separation_deg"] for r in nearest]
+    assert seps == sorted(seps)
+
+    mags = [r["johnson_v_mag"] for r in brightest]
+    assert mags == sorted(mags)
+    assert brightest[0]["native_id"] == "090-0000004"
+    assert {r["native_id"] for r in brightest} != {r["native_id"] for r in nearest}
+    # ...and the brightest star the nearest-N cap would have missed is in there.
+    assert brightest[0]["separation_deg"] > max(seps)
+
+
+def test_cone_order_by_rejects_unknown_column(imported):
+    with pytest.raises(CatalogQueryError, match="Unknown order-by column"):
+        cone_search(
+            imported, "apass", 100.0039, 4.861469, radius_deg=0.5, order_by="nope"
+        )
+
+
+def test_explain_plan_reflects_the_requested_ordering(imported):
+    """--explain must explain the query that runs, not a nearest-first stand-in.
+
+    Ordering by magnitude adds a sort over the cone's candidate rows; a plan that
+    omitted it would misrepresent the cost of the query the caller asked for.
+    """
+    nearest = cone_search_plan(imported, "apass", 100.0039, 4.861469, radius_deg=0.5)
+    brightest = cone_search_plan(
+        imported, "apass", 100.0039, 4.861469, radius_deg=0.5,
+        order_by="johnson_v_mag",
+    )
+    assert "johnson_v_mag" not in nearest
+    assert "johnson_v_mag" in brightest
+    # Sorting by magnitude is what adds the sort step over the cone's rows.
+    assert "Sort Key" in brightest
+
+
+def test_explain_plan_validates_the_order_by_column(imported):
+    with pytest.raises(CatalogQueryError, match="Unknown order-by column"):
+        cone_search_plan(
+            imported, "apass", 100.0039, 4.861469, radius_deg=0.5,
+            order_by="1=1; DROP TABLE catalog_data.apass_source; --",
+        )
+
+
+def test_short_import_warns_against_the_expected_row_count(imported):
+    """The 6-row APASS sample stands in for a truncated source: it must warn.
+
+    A short read of a multi-GB catalog parses cleanly and would otherwise import,
+    validate and activate as a silently incomplete release.
+    """
+    res = revalidate_release(imported, "apass", "dr10")
+    assert res["status"] == "passed_with_warnings"
+    check = next(c for c in res["checks"] if c["name"] == "row_count_vs_expected")
+    assert check["level"] == "warning" and not check["passed"]
+    assert "truncated" in check["detail"]
+
+
+def test_every_family_carries_an_expected_row_count(imported):
+    """All four families have a published size, so all four get the guard."""
+    for slug in ("apass", "vsx", "landolt", "stetson"):
+        fam = get_family_def(slug)
+        assert fam is not None
+        assert all(r.approx_row_count for r in fam.releases), slug
+
+
+def test_row_count_check_is_skipped_without_an_expectation(imported):
+    """A family with no published size must not have a count invented for it."""
+    eng = _reader(imported)
+    with eng.connect() as conn:
+        checks = validate_production(
+            conn, "catalog_data", "apass_source_r2", expected_row_count=None
+        )
+    eng.dispose()
+    names = {c.name for c in checks}
+    assert "row_count_vs_expected" not in names
+    assert "production_rows" in names  # the other checks still run
+
+
+def test_expected_row_count_is_recorded_from_the_family_def(imported):
+    eng = _reader(imported)
+    with eng.connect() as conn:
+        expected = conn.execute(
+            text(
+                "SELECT r.expected_row_count FROM catalog_registry.catalog_release r "
+                "JOIN catalog_registry.catalog_family f ON f.id=r.family_id "
+                "WHERE f.slug='apass' AND r.name='DR10'"
+            )
+        ).scalar()
+    eng.dispose()
+    assert expected == 128_632_615
+
+
+def test_default_release_id_column_is_gone(imported):
+    """Dropped in 0006: the active release is resolved from state, one source."""
+    eng = _reader(imported)
+    with eng.connect() as conn:
+        cols = set(
+            conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema='catalog_registry' AND table_name='catalog_family'"
+                )
+            ).scalars()
+        )
+    eng.dispose()
+    assert "default_release_id" not in cols
+    assert {"slug", "data_table", "enabled"} <= cols  # the table itself is intact
 
 
 def test_native_id_lookup(imported):

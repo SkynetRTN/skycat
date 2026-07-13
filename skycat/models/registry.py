@@ -51,10 +51,10 @@ class CatalogFamily(CatalogBase, TimestampMixin):
     data_table: Mapped[str | None] = mapped_column(String(128))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    default_release_id: Mapped[int | None] = mapped_column(
-        ForeignKey(f"{SCHEMA_REGISTRY}.catalog_release.id", use_alter=True, ondelete="SET NULL")
-    )
-
+    # The active release is resolved from CatalogRelease.state == ACTIVE (a
+    # partial unique index enforces at most one per family). There is
+    # deliberately no default_release_id mirror of it — two sources of truth for
+    # one fact is how they drift apart.
     releases: Mapped[list["CatalogRelease"]] = relationship(
         back_populates="family",
         foreign_keys="CatalogRelease.family_id",

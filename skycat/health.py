@@ -28,11 +28,7 @@ from .database.engine import create_catalog_engine
 from .database.migrate import current_revision, script_heads
 from .registry.catalog_defs import CATALOG_FAMILIES
 
-_TRANSIENT_STATES = (
-    CatalogReleaseState.STAGING.value,
-    CatalogReleaseState.LOADING.value,
-    CatalogReleaseState.VALIDATING.value,
-)
+_TRANSIENT_STATES = (CatalogReleaseState.STAGING.value,)
 
 
 @dataclass

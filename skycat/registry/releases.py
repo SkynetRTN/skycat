@@ -83,8 +83,6 @@ def resolve_active_release(session: Session, family_slug: str) -> CatalogRelease
 
 
 def list_releases(session: Session, family_slug: str | None = None) -> list[CatalogRelease]:
-    # Explicit onclause: release<->family have two FKs (family_id and
-    # default_release_id), so the join is otherwise ambiguous.
     stmt = select(CatalogRelease).join(
         CatalogFamily, CatalogRelease.family_id == CatalogFamily.id
     )
@@ -129,9 +127,6 @@ def activate_release(session: Session, release: CatalogRelease) -> CatalogReleas
 
     release.state = CatalogReleaseState.ACTIVE.value
     release.activated_at = _now()
-    family = session.get(CatalogFamily, release.family_id)
-    if family is not None:
-        family.default_release_id = release.id
     session.flush()
     return release
 
@@ -140,8 +135,5 @@ def deactivate_release(session: Session, release: CatalogRelease) -> CatalogRele
     if release.state == CatalogReleaseState.ACTIVE.value:
         release.state = CatalogReleaseState.SUPERSEDED.value
         release.superseded_at = _now()
-        family = session.get(CatalogFamily, release.family_id)
-        if family is not None and family.default_release_id == release.id:
-            family.default_release_id = None
         session.flush()
     return release
