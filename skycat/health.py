@@ -17,15 +17,13 @@ from .config import CatalogRole, CatalogSettings
 from .constants import (
     ALL_SCHEMAS,
     FORBIDDEN_DATABASE_NAMES,
-    ROLE_INGEST,
-    ROLE_OWNER,
-    ROLE_READER,
     SCHEMA_DATA,
     SCHEMA_REGISTRY,
     CatalogReleaseState,
 )
 from .database.engine import create_catalog_engine
 from .database.migrate import current_revision, script_heads
+from .database.roles import roles_present
 from .registry.catalog_defs import CATALOG_FAMILIES
 
 _TRANSIENT_STATES = (CatalogReleaseState.STAGING.value,)
@@ -101,12 +99,11 @@ def health_report(
                 report.add(f"schema_{schema}", schema in present_schemas,
                            "present" if schema in present_schemas else "missing")
 
-            present_roles = set(conn.execute(text(
-                "SELECT rolname FROM pg_roles WHERE rolname = ANY(:n)"
-            ), {"n": [ROLE_OWNER, ROLE_INGEST, ROLE_READER]}).scalars())
-            for r in (ROLE_OWNER, ROLE_INGEST, ROLE_READER):
-                report.add(f"role_{r}", r in present_roles,
-                           "present" if r in present_roles else "missing")
+            # NB: not `role` — that is this function's CatalogRole parameter, and
+            # it is still needed below for the admin-config fallback.
+            for role_name, present in roles_present(conn).items():
+                report.add(f"role_{role_name}", present,
+                           "present" if present else "missing")
 
             # Registry contents (only if registry schema exists).
             if SCHEMA_REGISTRY in present_schemas:

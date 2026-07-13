@@ -125,9 +125,6 @@ class CatalogDatabaseConfig:
                 f"{EXPECTED_DATABASE_NAME!r}), never the primary `sky` database."
             )
 
-    def with_database(self, name: str) -> "CatalogDatabaseConfig":
-        return replace(self, name=name)
-
     def with_credentials(self, user: str, password: str) -> "CatalogDatabaseConfig":
         return replace(self, user=user, password=password)
 

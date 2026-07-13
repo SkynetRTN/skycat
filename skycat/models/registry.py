@@ -123,10 +123,6 @@ class CatalogRelease(CatalogBase, TimestampMixin):
         back_populates="release", cascade="all, delete-orphan"
     )
 
-    @property
-    def is_active(self) -> bool:
-        return str(self.state) == CatalogReleaseState.ACTIVE.value
-
 
 class IngestionRun(CatalogBase):
     """One attempt to ingest a release. Failures retain diagnostics here."""

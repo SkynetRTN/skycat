@@ -41,9 +41,3 @@ def validate_vsx_staging(conn: Connection, staging_fqn: str) -> list[Check]:
     )).scalar() or 0)
     checks.append(Check("vsx_var_type_present", INFO, True, f"{typed} rows carry a variable type"))
     return checks
-
-
-FAMILY_VALIDATORS = {
-    "apass": "validate_apass_staging",
-    "vsx": "validate_vsx_staging",
-}

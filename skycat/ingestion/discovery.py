@@ -50,6 +50,16 @@ class DiscoveredRelease:
     def file_count(self) -> int:
         return len(self.data_files)
 
+    @property
+    def aux_file_count(self) -> int:
+        """Auxiliary files (ReadMe, zips, secondary tables) alongside the data.
+
+        They are deliberately excluded from ``total_bytes`` and the manifest
+        checksum — a changed ReadMe must not invalidate an import — but an
+        operator staging a release wants to see they arrived.
+        """
+        return len(self.aux_files)
+
     def manifest_checksum(self) -> str:
         return compute_manifest_checksum(self.data_files)
 

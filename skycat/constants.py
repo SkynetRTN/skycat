@@ -70,10 +70,11 @@ class CatalogReleaseState(str, enum.Enum):
 
 
 class IngestionRunStatus(str, enum.Enum):
+    """Outcome of one ingestion attempt. The runner sets exactly these three."""
+
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
 class ValidationStatus(str, enum.Enum):

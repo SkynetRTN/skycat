@@ -43,7 +43,8 @@ class FamilyDef:
     coordinate_frame: str = "ICRS"
     epoch_jyear: float | None = 2000.0
     releases: tuple[ReleaseDef, ...] = field(default_factory=tuple)
-    # Families with no importer yet are listed for completeness / planning.
+    # Guards import_release: a family listed for planning with no parser yet
+    # fails fast rather than half-importing. All four shipped families have one.
     importer_available: bool = True
 
     def release(self, slug: str) -> ReleaseDef | None:

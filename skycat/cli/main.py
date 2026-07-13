@@ -226,6 +226,7 @@ def discover(ctx, family, release, source_dir):
             "present": d.present,
             "source_dir": str(d.source_dir),
             "files": d.file_count,
+            "aux_files": d.aux_file_count,
             "bytes": d.total_bytes,
             "issues": d.issues,
         }
@@ -233,7 +234,7 @@ def discover(ctx, family, release, source_dir):
     ]
     human = "\n".join(
         f"{d['family']}/{d['release']:8} present={d['present']} files={d['files']} "
-        f"bytes={d['bytes']} {d['source_dir']} {d['issues'] or ''}"
+        f"aux={d['aux_files']} bytes={d['bytes']} {d['source_dir']} {d['issues'] or ''}"
         for d in data
     )
     _emit(ctx, data, human)
