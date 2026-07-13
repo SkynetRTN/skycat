@@ -19,7 +19,7 @@ from ..database.engine import create_catalog_engine
 from ..database.init import initialize_catalog_database, reset_catalog_database
 from ..database.migrate import current_revision, script_heads, upgrade
 from ..health import health_report
-from ..ingestion import discover_all, discover_one, import_release
+from ..ingestion import IngestionError, discover_all, discover_one, import_release
 from ..ingestion.maintenance import (
     clean_staging,
     remove_release,
@@ -27,6 +27,7 @@ from ..ingestion.maintenance import (
     table_sizes,
 )
 from ..registry import (
+    ReleaseStateError,
     activate_release,
     deactivate_release,
     list_families,
@@ -78,9 +79,10 @@ class _FriendlyGroup(click.Group):
             return super().invoke(ctx)
         except CatalogConfigError as exc:
             raise _ConfigException(str(exc)) from exc
-        except CatalogQueryError as exc:
-            # Unknown family/column, no active release, bad filter — the caller
-            # asked for something that does not exist, not a bug.
+        except (CatalogQueryError, IngestionError, ReleaseStateError) as exc:
+            # Unknown family/column, no active release, a missing source file, a
+            # failed import, an illegal state transition — operational outcomes
+            # the caller needs to read, not stack traces.
             raise click.ClickException(str(exc)) from exc
 
 
@@ -309,6 +311,17 @@ def import_cmd(
         + (f"\n  skipped: {report.skipped_reason}" if report.skipped_reason else "")
     )
     _emit(ctx, data, human)
+
+    # Asking for --activate and not getting it is a failure of intent, and it must
+    # not look like success: the K8s ingest Job would otherwise be marked Complete
+    # while the release sits in READY and consumers keep serving the old data.
+    # The import itself is intact — re-run with --allow-warnings, or `activate`
+    # explicitly, once the warnings have been read.
+    if activate and not report.activated:
+        raise click.ClickException(
+            f"{family}/{release} imported but NOT activated: "
+            f"{report.skipped_reason or 'activation did not occur'}"
+        )
 
 
 @main.command()

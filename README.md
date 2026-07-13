@@ -115,7 +115,7 @@ staging/prod/Kubernetes endpoints.
 | `SKYCAT_DB_SSLMODE` | — | libpq sslmode |
 | `SKYCAT_DB_POOL_SIZE` / `_MAX_OVERFLOW` / `_POOL_RECYCLE` / `_POOL_TIMEOUT` / `_POOL_PRE_PING` | 10 / 5 / 300 / 30 / true | pool tuning |
 | `SKYCAT_DB_ECHO` | false | SQL echo |
-| `SKYCAT_DB_STATEMENT_TIMEOUT` | — | per-connection ms |
+| `SKYCAT_DB_STATEMENT_TIMEOUT` | — (but `CatalogReader` defaults to `30000`) | per-connection ms. Unset, the CLI and the bare query functions run with **no** timeout; `CatalogReader` applies 30s so one pathological query cannot wedge a worker. Setting this wins everywhere. |
 | `SKYCAT_DB_BOOTSTRAP_USER` / `_PASSWORD` | — | init only (DBA/superuser) |
 | `SKYCAT_DB_ADMIN_USER` / `_PASSWORD` | — | owner / migrator |
 | `SKYCAT_DB_INGEST_USER` / `_PASSWORD` | — | bulk loader |
