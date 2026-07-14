@@ -67,7 +67,7 @@ COMMANDS, GROUP_FLAGS = _cli_surface()
 @pytest.mark.parametrize("doc", _docs(), ids=lambda p: p.name)
 def test_documented_cli_commands_and_flags_exist(doc):
     problems = []
-    for block in _code_blocks(doc.read_text(), "bash"):
+    for block in _code_blocks(doc.read_text(encoding="utf-8"), "bash"):
         for raw in block.splitlines():
             line = raw.split("#", 1)[0].strip()
             match = re.search(r"\bskycat\b\s+(.*)", line)
@@ -95,7 +95,7 @@ def test_documented_cli_commands_and_flags_exist(doc):
 def test_documented_catalogreader_api_exists(doc):
     """Methods and kwargs shown on a CatalogReader must be real."""
     problems = []
-    for block in _code_blocks(doc.read_text(), "python"):
+    for block in _code_blocks(doc.read_text(encoding="utf-8"), "python"):
         try:
             tree = ast.parse(block)
         except SyntaxError:
@@ -143,7 +143,7 @@ def _constructs_reader(func: ast.expr) -> bool:
 def test_cited_source_files_exist(doc):
     missing = [
         path
-        for path in set(re.findall(r"`(skycat/[\w/]+\.py)`", doc.read_text()))
+        for path in set(re.findall(r"`(skycat/[\w/]+\.py)`", doc.read_text(encoding="utf-8")))
         if not any(p in path for p in PLACEHOLDERS) and not (PKG_ROOT / path).exists()
     ]
     assert not missing, f"{doc.name} cites files that do not exist: {missing}"
