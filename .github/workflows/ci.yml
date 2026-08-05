@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  skycat:
+    name: skycat: ruff, pyright, pytest
+    runs-on: ubuntu-latest
+    services:
+      catalogs:
+        image: imresamu/postgis:16-3.5
+        env:
+          POSTGRES_USER: catalog_admin
+          POSTGRES_PASSWORD: catalog
+          POSTGRES_DB: catalogs
+        ports:
+          - 5432
+        options: >-
+          --health-cmd "pg_isready -U catalog_admin -d catalogs"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SKYCAT_DB_BACKEND: postgresql+psycopg
+      SKYCAT_DB_HOST: localhost
+      SKYCAT_DB_NAME: catalogs
+      SKYCAT_DB_USER: catalog_reader
+      SKYCAT_DB_PASSWORD: catalog
+      SKYCAT_DB_BOOTSTRAP_USER: catalog_admin
+      SKYCAT_DB_BOOTSTRAP_PASSWORD: catalog
+      SKYCAT_DB_ADMIN_USER: catalog_owner
+      SKYCAT_DB_ADMIN_PASSWORD: catalog_owner_pw
+      SKYCAT_DB_INGEST_USER: catalog_ingest
+      SKYCAT_DB_INGEST_PASSWORD: catalog_ingest_pw
+      SKYCAT_DB_READER_USER: catalog_reader
+      SKYCAT_DB_READER_PASSWORD: catalog
+    steps:
+      - name: Map catalog service port
+        run: echo "SKYCAT_DB_PORT=${{ job.services.catalogs.ports['5432'] }}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync
+        run: uv sync --frozen --extra dev
+
+      - name: Ruff
+        run: uv run ruff check skycat tests
+
+      - name: Pyright
+        run: uv run pyright skycat
+
+      - name: Initialize catalog database
+        run: uv run skycat init
+
+      - name: Guard postgis tests
+        run: |
+          uv run python - <<'PY'
+          from skycat.config import CatalogRole, CatalogSettings
+          from skycat.database.engine import create_catalog_engine
+
+          engine = create_catalog_engine(
+              CatalogSettings.from_env().config_for(CatalogRole.READER),
+              pool_size=1,
+              max_overflow=0,
+          )
+          with engine.connect() as conn:
+              conn.exec_driver_sql("SELECT 1")
+          print("reader role reachable - postgis tests will run")
+          PY
+
+      - name: Test
+        run: uv run pytest tests -q

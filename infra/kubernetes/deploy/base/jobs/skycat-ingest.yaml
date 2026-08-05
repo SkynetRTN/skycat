@@ -1,0 +1,64 @@
+# Catalog ingestion job — imports ONE explicit family + release. NOT part of the
+# base kustomization (never runs on ordinary app startup). Edit the family /
+# release args and apply on demand:
+#   kubectl apply -f infra/kubernetes/deploy/base/jobs/skycat-ingest.yaml
+#
+# Runs `skycat import <family> <release> --activate` as the INGEST
+# role. Records import history, validates before activation, builds a new
+# release partition, and only activates after a clean validation. Source data is
+# mounted read-only from a PVC the operator provisions + populates (the image
+# never bakes catalog datasets).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: skycat-ingest-apass-dr6
+  namespace: skycat
+spec:
+  backoffLimit: 0           # imports are explicit; do not auto-retry blindly
+  ttlSecondsAfterFinished: 172800
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: skycat-ingest
+          image: ghcr.io/skynetrtn/skycat:stable
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: skycat-config
+            - secretRef:
+                name: skycat-runtime-secrets
+            # Privileged catalog creds (bootstrap/admin/ingest) — Job-only; the
+            # ingest role bulk-loads + writes release metadata. Never mounted by
+            # ordinary reader/query workloads.
+            - secretRef:
+                name: skycat-admin-secrets
+          env:
+            - name: SKYCAT_DATA_ROOT
+              value: /catalog-data
+            - name: SKYCAT_WORK_ROOT
+              value: /catalog-work
+          # Edit family + release here (e.g. apass dr10, vsx current).
+          args: ["import", "apass", "dr6", "--activate"]
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 8Gi
+          volumeMounts:
+            - name: catalog-source
+              mountPath: /catalog-data
+              readOnly: true
+            - name: catalog-work
+              mountPath: /catalog-work
+      volumes:
+        # Read-only source datasets. Provision + load this PVC out-of-band
+        # (operators copy /srv/agents/catalogs content into it). Never bake
+        # datasets into the image.
+        - name: catalog-source
+          persistentVolumeClaim:
+            claimName: catalog-source-data
+        - name: catalog-work
+          emptyDir: {}

@@ -1,0 +1,520 @@
+---
+status: implemented
+last-verified: 2026-07-21
+authority: code
+---
+
+# Skycat catalog store design
+
+PR B from the old PR #1631 split is now merged. This document records the
+landed `skycat` design: a standalone PostgreSQL/PostGIS store for large local
+astronomical reference catalogs, plus the package, CLI, CI, Docker, and
+Kubernetes wiring needed to operate it.
+
+`skycat` is deliberately separate from `skynet-db` and the primary `sky`
+database. It owns a different lifecycle: immutable or rarely refreshed catalog
+releases, very large row counts, spatial indexes, explicit ingestion jobs, and
+read-only consumers.
+
+## 1. Scope
+
+Implemented in PR B:
+
+- a standalone Python project at the [repository root](../../../..),
+- a dedicated `catalogs` PostgreSQL/PostGIS database contract,
+- package-owned SQLAlchemy metadata and Alembic migrations,
+- catalog registry tables, data schemas, release lifecycle, and validation,
+- APASS, VSX, Landolt, and Stetson family models, parsers, migrations, and
+  validation,
+- PostGIS cone search, native-id lookup, and batch crossmatch,
+- a shared `CatalogReader` facade for consumers,
+- a single `skycat` CLI for init, migrate, import, query, validation, health,
+  and maintenance,
+- local Docker Compose and a PostGIS dev image,
+- Kubernetes one-shot jobs for init, migration, and ingestion,
+- production configuration/secrets wiring, and
+- CI that runs lint, type checking, and real PostGIS integration tests.
+
+Not implemented in PR B:
+
+- pipeline catalog adapter wiring into `skynet-db` field calibration,
+- public API `/catalogs` endpoints,
+- browser or SDK catalog search surfaces,
+- astrometric solver catalog replacement, and
+- additional future families such as Tycho-2, Gaia, Pan-STARRS, 2MASS, UCAC5,
+  SkyMapper, or USNO-B1.0.
+
+Those are consumer workstreams. PR B provides the catalog storage/query
+foundation they can use.
+
+## 2. Package Boundaries
+
+`skycat` has its own project file,
+[`pyproject.toml`](../../../../pyproject.toml), with a small
+dependency set: SQLAlchemy, GeoAlchemy2, psycopg, Alembic, and Click. It does
+not depend on `skynet-db`, `skylib`, or service code.
+
+The repository root is the uv project. Local development installs it directly:
+
+```bash
+uv sync --extra dev
+```
+
+The important boundary rule is:
+
+> A process may hold both a `sky` database session and a `catalogs` database
+> session, but those sessions must come from different packages, different
+> SQLAlchemy metadata, and different environment namespaces.
+
+The package enforces this with:
+
+- `skycat.database.base.CatalogBase`, not `skynet_db.models.Base`,
+- `skycat.database.engine.create_catalog_engine`, not `skynet_db.db`,
+- `SKYCAT_DB_*` config, not `SHARED_DB_*` or `SKYNET_<APP>_DB_*`,
+- `CatalogDatabaseConfig.assert_not_primary_database()` on mutating paths, and
+- migration/init/reset guards that refuse reserved database names such as `sky`.
+
+## 3. Database Contract
+
+The catalog store is a separate PostgreSQL database named `catalogs`. It
+requires PostGIS and never falls back to non-spatial Python filtering.
+
+Schemas:
+
+| Schema | Purpose |
+|---|---|
+| `catalog_registry` | catalog families, releases, ingestion runs, validation summaries |
+| `catalog_data` | production catalog parent tables and release partitions |
+| `catalog_staging` | unlogged staging and rejected-row tables during imports |
+
+Roles:
+
+| Role | Used by | Capabilities |
+|---|---|---|
+| bootstrap / DBA, usually `catalog_admin` | `skycat init` only | enable PostGIS, create roles, apply grants |
+| `catalog_owner` | Alembic migrations | owns schemas/objects, migrates catalog schema |
+| `catalog_ingest` | import, activate, validation, maintenance jobs | loads staging, creates release partitions, writes registry metadata |
+| `catalog_reader` | application/query consumers | read-only registry/data access and TEMP table creation for batch crossmatch |
+
+Application deployments receive only the reader/default password. Privileged
+bootstrap, owner, and ingest passwords live in the separate `skycat-admin-secrets`
+Kubernetes Secret and are mounted only by explicit catalog jobs.
+
+## 4. Catalog Families
+
+PR B ships four enabled families. Each family has its own typed table and parser
+instead of being forced into a universal source table.
+
+| Family | Releases | Parent table | Approx rows | Notes |
+|---|---|---|---|---|
+| `apass` | DR6, DR10 | `catalog_data.apass_source` | 42.6M / 128.6M | APASS superset schema; release-missing bands are `NULL` |
+| `vsx` | current | `catalog_data.vsx_source` | 10.3M | AAVSO Variable Star Index fields: OID, name, type, magnitudes, period, flags |
+| `landolt` | 1992, 2009 | `catalog_data.landolt_source` | 526 / 595 | stores V plus measured color indices; U/B/R/I are derived downstream |
+| `stetson` | StetsonGlobs | `catalog_data.stetson_source` | 4.89M | UBVRI globular-cluster standards with cluster and quality fields |
+
+The static family/release definitions live in
+[`registry/catalog_defs.py`](../../../../skycat/registry/catalog_defs.py).
+They define source subdirectories, parser keys, data-file globs, auxiliary-file
+globs, and approximate row counts used by validation.
+
+Adding a new family follows the existing pattern:
+
+1. Add a `FamilyDef`/`ReleaseDef`.
+2. Add a parser under `ingestion/parsers/`.
+3. Add a typed model if the schema differs.
+4. Add an Alembic migration for the parent table/indexes.
+5. Add family-specific validation if needed.
+6. Add parser/query/ingestion tests with sample data.
+
+## 5. Release Model
+
+A catalog family may have multiple imported releases, but exactly one active
+release serves default queries. The active release is represented by
+`CatalogRelease.state == "active"` and enforced by a partial unique index:
+
+```sql
+CREATE UNIQUE INDEX uq_active_release_per_family
+  ON catalog_registry.catalog_release (family_id)
+  WHERE state = 'active';
+```
+
+There is deliberately no `catalog_family.default_release_id` mirror at head.
+Migration `0006` removed it because it duplicated the state column and created a
+circular foreign key.
+
+Release policy:
+
+- Consumers normally query the active release and do not name a release.
+- Explicit `--release` / `release=` is for operations, parity testing, and
+  reproducibility.
+- A superseded release remains queryable and can be reactivated for rollback.
+- Failed or incomplete releases cannot activate.
+- A gross row-count shortfall warns and blocks auto-activation unless the
+  operator passes `--allow-warnings`.
+
+The production catalog tables are partitioned by `release_id` using
+`LIST (release_id)`. Each imported release gets a physical child partition such
+as `catalog_data.apass_source_r2`.
+
+`release_id` in the large data tables intentionally has no foreign key to the
+registry. Validating a foreign key on a 128M-row partition would force a full
+scan at attach time. The importer creates releases through the registry first
+and only writes known release ids.
+
+## 6. Spatial Model
+
+Every positional table stores the original numeric coordinates:
+
+- `ra_deg`, in `[0, 360)`,
+- `dec_deg`, in `[-90, 90]`, and
+- a generated PostGIS column `geom geography(Point,4326)`.
+
+The generated expression maps RA to PostGIS longitude:
+
+```sql
+ST_SetSRID(
+  ST_MakePoint(
+    CASE WHEN ra_deg > 180 THEN ra_deg - 360 ELSE ra_deg END,
+    dec_deg
+  ),
+  4326
+)::geography
+```
+
+The shared expression is defined in
+[`spatial/cone.py`](../../../../skycat/spatial/cone.py) and
+used by every model through `geom_column()`.
+
+Cone searches use:
+
+- `ST_DWithin(geom, search_point, radius_m, false)` for indexed filtering,
+- `ST_Distance(geom, search_point, false)` for separation, and
+- a consistent PostGIS sphere radius for degree/metre conversion.
+
+This handles RA wraparound and poles in the database. There is no RA/Dec box
+scan and no Python-side spherical filtering for the main query path.
+
+Every parent table has a GiST index on `geom`; the importer recreates parent
+indexes on detached release partitions before attaching them.
+
+## 7. Query API
+
+The low-level query functions live under
+[`skycat/query/`](../../../../skycat/query/):
+
+- `cone_search()` returns rows inside a cone, defaulting to nearest-first.
+- `lookup_native_id()` returns rows by catalog-native source identifier.
+- `batch_crossmatch()` matches many input coordinates in one database round
+  trip.
+- `cone_search_plan()` returns `EXPLAIN` output for index-plan verification.
+
+`cone_search()` supports:
+
+- radius in degrees, arcminutes, or arcseconds,
+- active-release or explicit-release resolution,
+- magnitude filtering by a typed magnitude column,
+- validated `QualityFilter` predicates,
+- `order_by=<numeric column>`, and
+- a `resolved=` fast path for callers that already cached release resolution.
+
+`order_by` is a PR-B correction that matters for science consumers. Nearest-N
+and brightest-N are different row sets in dense fields. When callers pass a
+magnitude column such as `johnson_v_mag`, the query sorts ascending with
+`NULLS LAST` and separation as the tiebreaker, so `limit` keeps the brightest
+stars in the cone.
+
+`QualityFilter` validates both the column and operator before building a
+SQLAlchemy expression, so caller-provided filters do not become raw SQL.
+
+`batch_crossmatch()` streams inputs into a TEMP table with a generated
+`geography` column, then uses a LATERAL join with `ST_DWithin` and KNN ordering
+(`geom <-> qgeom`) to find nearest candidates. Invalid input coordinates are
+reported as `matched=False` rows instead of aborting the whole batch.
+
+## 8. Consumer Facade
+
+Consumers should use
+[`CatalogReader`](../../../../skycat/client.py) rather than
+constructing engines and resolving releases at each call site.
+
+`CatalogReader` provides:
+
+- one lazy pooled engine bound to `catalog_reader`,
+- thread-safe app/worker-scope reuse,
+- a 60-second active-release TTL cache,
+- `invalidate()` for activation-aware callers,
+- a default 30-second statement timeout unless explicitly configured, and
+- convenience methods: `cone()`, `crossmatch()`, and `lookup()`.
+
+The release cache is not just a cached release name. The query functions accept
+a `ResolvedRelease` object so the hot path can skip the registry lookup
+entirely.
+
+`CatalogReader` is sync by design. The current planned consumers are sync
+pipeline workers or FastAPI sync dependencies running in the threadpool.
+
+## 9. Ingestion Lifecycle
+
+Catalog imports are explicit operator actions, not service startup behavior.
+The core importer is
+[`ingestion/runner.py`](../../../../skycat/ingestion/runner.py).
+
+One import runs:
+
+1. Discover source files under `SKYCAT_DATA_ROOT` or an explicit source
+   directory.
+2. Compute a manifest checksum, or a full content checksum if requested.
+3. Register/sync the family and release metadata.
+4. Create an `IngestionRun` record.
+5. Stream parser rows into an unlogged staging table with PostgreSQL `COPY`.
+6. Mark invalid staging rows with `reject_reason`.
+7. Retain rejected rows in a separate staging table for diagnostics.
+8. Build a detached incoming production table.
+9. Insert valid staging rows into the detached table.
+10. Add the release-id CHECK, primary key, indexes, and `ANALYZE`.
+11. Validate production rows, row-count floor, coordinate ranges, and spatial
+    index presence.
+12. In a short transaction, detach/drop any old partition, rename incoming to
+    the canonical partition name, and `ATTACH PARTITION`.
+13. Mark the release `ready` or keep an active replacement `active`.
+14. Optionally activate the release.
+15. Drop staging on success unless `--keep-staging` was requested.
+
+The detached-table build is the key scalability decision: the parent partitioned
+table is not locked during the multi-minute load/index/validate work. Existing
+active releases keep serving reads until the metadata-only swap.
+
+For `--replace --force` of an active release, the release remains active and the
+old partition keeps serving until the swap succeeds. If import fails before the
+swap, the old partition remains live. If the final transactional swap fails,
+PostgreSQL rolls it back.
+
+The importer records failures in the release and ingestion-run tables on a
+separate metadata path and then re-raises, so failed jobs leave an audit trail.
+
+Source files are read-only. Generated work products belong in `SKYCAT_WORK_ROOT`
+or `catalog_staging`, never back into the source tree.
+
+## 10. CLI
+
+The package exposes one console script:
+
+```bash
+skycat <command>
+```
+
+Core commands:
+
+| Command | Purpose |
+|---|---|
+| `config` | show redacted resolved config |
+| `init` | enable PostGIS, create roles/grants/schemas, run migrations |
+| `migrate` / `migrate-status` | apply/check Alembic revisions |
+| `health` | read-only deep health report |
+| `families` / `releases` / `history` | inspect registry state |
+| `discover` | find source releases under the data root |
+| `import` | import one family/release, optionally activate |
+| `validate` | revalidate an imported production partition |
+| `activate` / `deactivate` | switch release state |
+| `cone` / `lookup` / `crossmatch` | query catalog data |
+| `sizes` | report table/index sizes |
+| `clean-staging` | drop staging tables only |
+| `remove-release` | remove a release partition and registry rows |
+| `reset` | guarded dev-only schema reset |
+
+All commands support `--json` for machine-readable output. Operator-input
+errors such as unknown families, missing active releases, bad query columns, or
+illegal release-state transitions render as friendly CLI errors rather than raw
+tracebacks.
+
+Destructive commands require explicit flags. `reset` requires `--force` and
+also refuses production-like targets unless `--allow-production` is supplied.
+It drops only `catalog_registry`, `catalog_data`, and `catalog_staging`; it does
+not drop the database, volume, or source files.
+
+## 11. Initialization and Migrations
+
+`skycat init` is idempotent and non-destructive:
+
+1. connect with the bootstrap identity,
+2. refuse reserved database names,
+3. `CREATE EXTENSION IF NOT EXISTS postgis`,
+4. ensure `catalog_owner`, `catalog_ingest`, and `catalog_reader`,
+5. ensure the three schemas,
+6. apply grants and default privileges,
+7. run Alembic migrations as `catalog_owner`,
+8. reassign `catalog_data` and `catalog_staging` objects to `catalog_ingest`,
+9. re-apply catch-all grants, and
+10. verify PostGIS and schema presence.
+
+Migrations live under
+[`skycat/migrations`](../../../../skycat/migrations). The
+current sequence creates:
+
+- `0001`: schemas, PostGIS verification, registry tables, active-release index,
+- `0002`: APASS parent table and indexes,
+- `0003`: VSX parent table and indexes,
+- `0004`: Landolt parent table and indexes,
+- `0005`: Stetson parent table and indexes,
+- `0006`: removal of `catalog_family.default_release_id`.
+
+Migrations create only schemas, parent tables, indexes, and registry structure.
+Catalog data is never embedded in migrations; data arrives through ingestion
+jobs.
+
+## 12. Local Docker
+
+Docker Compose defines a separate `skycat-postgres` service:
+
+- image: `skycat-postgres:${LOCAL_IMAGE_TAG}`,
+- database: `catalogs`,
+- container port: `5432`,
+- host port: `5433`,
+- volume: `catalog_postgres_data`,
+- base image: `imresamu/postgis:16-3.5`, and
+- first-boot PostGIS init SQL.
+
+It is separate from any operational application database on host port 5432.
+
+Compose also defines `skycat-tools` profile containers that run the package CLI:
+
+- `skycat-init`,
+- `skycat-migrate`,
+- `skycat-health`,
+- `skycat-import`,
+- `skycat-validate`, and
+- `skycat-reset`.
+
+The tooling containers mount source data read-only at `/catalog-data` and a
+writable work volume at `/catalog-work`.
+
+Local dev secrets intentionally provide working development values for the
+catalog roles so the documented Compose flow can authenticate against the dev
+PostGIS container. They must be changed for any shared, staging, or production
+deployment.
+
+## 13. Kubernetes
+
+PR B adds explicit one-shot jobs under
+[`infra/kubernetes/deploy/base/jobs/`](../../../../infra/kubernetes/deploy/base/jobs):
+
+| Job | Command | Privilege |
+|---|---|---|
+| `skycat-init` | `skycat init` | bootstrap + admin + ingest, mounted only by this job |
+| `skycat-migrate` | `skycat migrate` | owner/migrator credentials |
+| `skycat-ingest-*` | `skycat import <family> <release> --activate` | ingest credentials |
+
+These jobs are not part of the base kustomization and do not run on ordinary
+application startup. Operators apply them deliberately.
+
+The ingest job mounts catalog source data from a PVC at `/catalog-data` and uses
+an `emptyDir` work root. Catalog datasets are never baked into the image.
+
+Shared application config includes only catalog reader connection settings and
+reader passwords. The privileged `skycat-admin-secrets` Secret is separate and
+mounted only by catalog jobs.
+
+Production runtime config points `SKYCAT_DB_HOST` at the externally provisioned
+catalog PostGIS host and uses `SKYCAT_DB_SSLMODE=require`.
+
+## 14. CI and Tests
+
+The root CI workflow has a `skycat: ruff, pyright, pytest` job. It:
+
+1. starts a separate PostGIS service container for `catalogs`,
+2. maps its random host port into `SKYCAT_DB_PORT`,
+3. syncs the standalone repository project,
+4. runs `ruff`,
+5. runs `pyright`,
+6. runs `skycat init`,
+7. verifies the reader role can connect, and
+8. runs `pytest`.
+
+The explicit reader-role guard matters because PostGIS-marked tests skip when
+no catalog database is reachable. CI fails before pytest if the database is
+misconfigured, so spatial coverage cannot silently disappear.
+
+The integration tests cover:
+
+- schema and PostGIS presence,
+- partitions and release states,
+- active and explicit release queries,
+- RA wraparound and high declination,
+- spherical separation agreement with a Python reference,
+- GiST index usage,
+- native-id lookup,
+- batch crossmatch,
+- role permissions,
+- release activation/deactivation/removal,
+- import idempotency and replacement,
+- data-safety guards, and
+- validation behavior.
+
+## 15. Consumer Rules
+
+PR B intentionally ships the store before attaching consumers.
+
+Use direct `skycat` package access for in-cluster Python consumers:
+
+- pipeline workers,
+- future scheduler/worker logic, and
+- backend services that already run inside the cluster.
+
+Use public API endpoints for remote or non-Python consumers:
+
+- browser sky charts and editors,
+- SDK users,
+- scripted external users, and
+- SkyNodes outside the cluster.
+
+Consumers should not expose release choice unless there is a specific science or
+ops reason. Default behavior should use the active release and return release
+identity as provenance, not make users choose it.
+
+For PR C pipeline integration, the expected shape is a `Catalog` adapter over
+`CatalogReader`, installed at registry construction time. The science code
+should not grow call-site `if skycat` branches. Fallback to remote catalogs
+belongs in a composite adapter and should occur only on availability errors, not
+on legitimate empty query results.
+
+## 16. Current Follow-ups
+
+Still outside PR B:
+
+- unify the two live `skynet-db` catalog registries before pipeline integration,
+- add `skynet-db` `Catalog` adapters over `CatalogReader`,
+- record backend/release provenance for calibration runs,
+- add public API catalog endpoints after the backend contract settles,
+- consider Tycho-2 or Gaia as the next family for bright-star saturation and
+  wide-field finder-chart use cases, and
+- add box search only if a future astrometric solver adapter actually needs it.
+
+## 17. Reference Map
+
+Primary package docs:
+
+- [`README.md`](../../../../README.md)
+- [`pyproject.toml`](../../../../pyproject.toml)
+- [`Dockerfile`](../../../../Dockerfile)
+
+Core implementation:
+
+- [`config.py`](../../../../skycat/config.py)
+- [`database/`](../../../../skycat/database)
+- [`models/`](../../../../skycat/models)
+- [`registry/`](../../../../skycat/registry)
+- [`ingestion/`](../../../../skycat/ingestion)
+- [`query/`](../../../../skycat/query)
+- [`client.py`](../../../../skycat/client.py)
+- [`health.py`](../../../../skycat/health.py)
+- [`cli/main.py`](../../../../skycat/cli/main.py)
+- [`migrations/versions/`](../../../../skycat/migrations/versions)
+
+Infra:
+
+- [`.github/workflows/ci.yml`](../../../../.github/workflows/ci.yml)
+- [`infra/docker/compose.yaml`](../../../../infra/docker/compose.yaml)
+- [`infra/docker/skycat-postgresql.dockerfile`](../../../../infra/docker/skycat-postgresql.dockerfile)
+- [`infra/kubernetes/deploy/base/jobs/skycat-init.yaml`](../../../../infra/kubernetes/deploy/base/jobs/skycat-init.yaml)
+- [`infra/kubernetes/deploy/base/jobs/skycat-migrate.yaml`](../../../../infra/kubernetes/deploy/base/jobs/skycat-migrate.yaml)
+- [`infra/kubernetes/deploy/base/jobs/skycat-ingest.yaml`](../../../../infra/kubernetes/deploy/base/jobs/skycat-ingest.yaml)

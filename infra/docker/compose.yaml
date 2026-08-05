@@ -1,0 +1,97 @@
+name: skycat
+
+services:
+  skycat-postgres:
+    image: skycat-postgres:${LOCAL_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: skycat-postgresql.dockerfile
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c maintenance_work_mem=512MB
+    environment:
+      POSTGRES_USER: ${SKYCAT_DB_BOOTSTRAP_USER:-catalog_admin}
+      POSTGRES_PASSWORD: ${SKYCAT_DB_BOOTSTRAP_PASSWORD:-catalog}
+      POSTGRES_DB: ${SKYCAT_DB_NAME:-catalogs}
+    ports:
+      - "5433:5432"
+    volumes:
+      - catalog_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "pg_isready -U ${SKYCAT_DB_BOOTSTRAP_USER:-catalog_admin} -d ${SKYCAT_DB_NAME:-catalogs}"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  skycat: &skycat-tool
+    env_file:
+      - path: ./.env
+        required: false
+      - path: ./.env.secrets
+        required: false
+    image: skycat:${LOCAL_IMAGE_TAG:-latest}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    profiles: ["skycat-tools"]
+    environment:
+      SKYCAT_DB_BACKEND: ${SKYCAT_DB_BACKEND:-postgresql+psycopg}
+      SKYCAT_DB_HOST: ${SKYCAT_DB_HOST:-skycat-postgres}
+      SKYCAT_DB_PORT: ${SKYCAT_DB_PORT:-5432}
+      SKYCAT_DB_NAME: ${SKYCAT_DB_NAME:-catalogs}
+      SKYCAT_DB_USER: ${SKYCAT_DB_USER:-catalog_reader}
+      SKYCAT_DB_PASSWORD: ${SKYCAT_DB_PASSWORD:-catalog}
+      SKYCAT_DB_BOOTSTRAP_USER: ${SKYCAT_DB_BOOTSTRAP_USER:-catalog_admin}
+      SKYCAT_DB_BOOTSTRAP_PASSWORD: ${SKYCAT_DB_BOOTSTRAP_PASSWORD:-catalog}
+      SKYCAT_DB_ADMIN_USER: ${SKYCAT_DB_ADMIN_USER:-catalog_owner}
+      SKYCAT_DB_ADMIN_PASSWORD: ${SKYCAT_DB_ADMIN_PASSWORD:-catalog_owner_pw}
+      SKYCAT_DB_INGEST_USER: ${SKYCAT_DB_INGEST_USER:-catalog_ingest}
+      SKYCAT_DB_INGEST_PASSWORD: ${SKYCAT_DB_INGEST_PASSWORD:-catalog_ingest_pw}
+      SKYCAT_DB_READER_USER: ${SKYCAT_DB_READER_USER:-catalog_reader}
+      SKYCAT_DB_READER_PASSWORD: ${SKYCAT_DB_READER_PASSWORD:-catalog}
+      SKYCAT_DB_SSLMODE: ${SKYCAT_DB_SSLMODE:-}
+      SKYCAT_DATA_ROOT: /catalog-data
+      SKYCAT_WORK_ROOT: /catalog-work
+    entrypoint: ["skycat"]
+    command: ["config"]
+    volumes:
+      - catalog_work:/catalog-work
+      - ${SKYCAT_HOST_DATA_ROOT:-/srv/agents/catalogs/photometry}:/catalog-data:ro
+    depends_on:
+      skycat-postgres:
+        condition: service_healthy
+
+  skycat-init:
+    <<: *skycat-tool
+    command: ["init"]
+
+  skycat-migrate:
+    <<: *skycat-tool
+    command: ["migrate"]
+
+  skycat-health:
+    <<: *skycat-tool
+    command: ["health"]
+
+  skycat-import:
+    <<: *skycat-tool
+    entrypoint: ["skycat", "import"]
+    command: []
+
+  skycat-validate:
+    <<: *skycat-tool
+    entrypoint: ["skycat", "validate"]
+    command: []
+
+  skycat-reset:
+    <<: *skycat-tool
+    entrypoint: ["skycat", "reset"]
+    command: []
+
+volumes:
+  catalog_postgres_data:
+  catalog_work:
