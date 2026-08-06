@@ -7,6 +7,9 @@ requires-python = ">=3.11, <3.14"
 authors = [
     { name = "Skycat maintainers" },
 ]
+maintainers = [
+    { name = "James Atkisson", email = "james@atkisson.net" },
+]
 dependencies = [
     "sqlalchemy ~= 2.0.38",
     "geoalchemy2 ~= 0.20.0",

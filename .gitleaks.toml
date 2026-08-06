@@ -1,0 +1,42 @@
+# gitleaks configuration for Skycat.
+#
+# The default rule set, plus allowlists for the credentials this repository
+# publishes on purpose. Every entry below is a value that is *documented* as
+# dev-only and is worthless outside a throwaway local container — the local
+# Compose database, the CI service container, and the examples the README tells
+# operators to change before any shared deployment.
+#
+# Adding an allowlist entry is a claim that the matched value is safe to be
+# public. Prefer narrowing by path and regex over broadening a rule.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Documented dev-only Compose and CI credentials"
+# `catalog`, `catalog_owner_pw`, `catalog_ingest_pw` — the local Compose stack,
+# the CI service container, and the .env examples that exist to be copied and
+# overwritten.
+regexes = [
+  '''catalog_owner_pw''',
+  '''catalog_ingest_pw''',
+  '''(SKYCAT_DB_[A-Z_]*PASSWORD|POSTGRES_PASSWORD)\s*[:=]\s*["']?catalog["']?''',
+]
+paths = [
+  '''infra/docker/\.env\.example''',
+  '''infra/docker/\.env\.secrets\.example''',
+  '''infra/docker/compose\.yaml''',
+  '''infra/docker/skycat-postgresql\.dockerfile''',
+  '''\.github/workflows/ci\.yml''',
+  '''README\.md''',
+  '''CLAUDE\.md''',
+  '''docs/.*\.md''',
+]
+
+[[allowlists]]
+description = "Test fixtures and sample catalog data"
+# Fixed-width astronomical records: long alphanumeric identifiers that entropy
+# rules read as tokens.
+paths = [
+  '''tests/data/.*''',
+]

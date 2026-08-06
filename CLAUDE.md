@@ -22,6 +22,10 @@ uv run skycat <command>                      # the CLI, host-run against SKYCAT_
 run therefore proves nothing about migrations, roles, COPY, partitions, or spatial indexes. Run the
 integration suite before claiming a change works end to end.
 
+CI runs these plus a 3.11/3.12/3.13 unit matrix, Alembic graph validation, a wheel-install smoke
+test, and workflow/container/manifest/secret checks. `docs/CI.md` maps the workflows to their
+required-check names and gives container-based local equivalents for each.
+
 ### Integration tests destroy catalog data
 
 The session-scoped `imported` fixture (`tests/conftest.py`) runs

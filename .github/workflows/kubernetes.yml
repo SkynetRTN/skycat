@@ -1,0 +1,46 @@
+name: Kubernetes manifests
+
+# The manifests under infra/kubernetes are starter Jobs meant to be copied into
+# a real cluster. A schema error in them is discovered by whoever is running a
+# migration under time pressure, which is the worst possible moment.
+
+on:
+  pull_request:
+    paths:
+      - "infra/kubernetes/**"
+      - ".github/workflows/kubernetes.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/kubernetes/**"
+      - ".github/workflows/kubernetes.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: kubernetes-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  kubernetes-manifests:
+    name: kubernetes manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate manifest schemas
+        # Static schema validation only — no cluster. The manifests reference
+        # ConfigMaps, Secrets, and image names that are deliberately
+        # placeholders, so existence is not something this can or should check.
+        run: |
+          docker run --rm -v "$PWD:/work" --workdir /work \
+            ghcr.io/yannh/kubeconform:latest \
+            -strict \
+            -summary \
+            -kubernetes-version 1.30.0 \
+            -ignore-missing-schemas \
+            infra/kubernetes

@@ -1,0 +1,76 @@
+name: Workflow safety
+
+# A broken or over-permissioned workflow silently voids every other check, so
+# the CI definition is linted like the code it gates.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: workflow-safety-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    # Syntax, event names, expression contexts, and the shell inside `run:`.
+    # This is the check that would have caught the unquoted job name that made
+    # ci.yml invalid YAML.
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Lint workflow syntax and shell snippets
+        run: |
+          docker run --rm -v "$PWD:/repo" --workdir /repo \
+            rhysd/actionlint:latest -color
+
+  zizmor:
+    # Security posture: over-broad permissions, credential persistence,
+    # template injection, risky pull_request_target usage.
+    name: zizmor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Audit workflow security posture
+        # Medium and up only. The informational tier is mostly "pin this action
+        # to a SHA", which is a repository policy decision rather than a defect;
+        # drop the thresholds once that policy is settled.
+        #
+        # The token is what enables the impostor-commit, ref-confusion, and
+        # known-vulnerable-actions audits — zizmor skips all three without it.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uvx zizmor@1 --min-severity medium --min-confidence medium .github/workflows
+
+  required:
+    # Stable name for branch protection, mirroring `required: ci`.
+    name: "required: workflow safety"
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [actionlint, zizmor]
+    steps:
+      - name: Fail unless every workflow-safety job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"'
+          if echo "$RESULTS" | jq -e 'any(.[]; .result != "success")' >/dev/null; then
+            echo "::error::a workflow-safety job failed, was cancelled, or was skipped"
+            exit 1
+          fi
+          echo "all workflow-safety jobs succeeded"

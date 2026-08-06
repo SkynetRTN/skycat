@@ -10,9 +10,15 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: nothing in this workflow writes to the repository.
+permissions:
+  contents: read
+
 jobs:
   skycat:
-    name: skycat: ruff, pyright, pytest
+    # The deep gate: real PostgreSQL/PostGIS, because schemas, roles, COPY,
+    # partitioning, and spatial queries have no meaningful non-database mode.
+    name: "skycat: ruff, pyright, pytest"
     runs-on: ubuntu-latest
     services:
       catalogs:
@@ -47,6 +53,8 @@ jobs:
         run: echo "SKYCAT_DB_PORT=${{ job.services.catalogs.ports['5432'] }}" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -87,3 +95,125 @@ jobs:
 
       - name: Test
         run: uv run pytest tests -q
+
+  unit-matrix:
+    # pyproject declares >=3.11,<3.14 but the deep gate only proves 3.12. The
+    # unit suite needs no database, so the other versions are cheap to cover.
+    name: "unit: python ${{ matrix.python-version }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync
+        run: uv sync --frozen --extra dev
+
+      - name: Unit tests (no database)
+        run: uv run --frozen pytest tests -q -m "not postgis"
+
+  migration-graph:
+    # Cheap, database-free check for the failure the PostGIS job reports late and
+    # obscurely: two heads after a merge, or a revision that no longer imports.
+    name: migration graph
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync
+        run: uv sync --frozen --extra dev
+
+      - name: Validate the Alembic revision graph
+        run: uv run pytest tests/test_migration_graph.py -q
+
+  package-build:
+    # Running from the checkout hides packaging bugs: the tests import `skycat`
+    # from the source tree, where alembic.ini and the migrations are always
+    # present. An installed wheel has neither guarantee.
+    name: package build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Install the wheel into a clean environment
+        run: |
+          uv venv /tmp/pkgcheck
+          uv pip install --python /tmp/pkgcheck/bin/python dist/*.whl
+
+      - name: Smoke-test the installed package
+        run: |
+          /tmp/pkgcheck/bin/python -c "import skycat; print('skycat', skycat.__version__)"
+          /tmp/pkgcheck/bin/skycat --help
+          /tmp/pkgcheck/bin/skycat config
+          /tmp/pkgcheck/bin/python - <<'PY'
+          # alembic.ini lives at the repo root and is deliberately not packaged,
+          # so an installed skycat must resolve script_location on its own. If
+          # the migrations stop shipping in the wheel, this is where it shows up.
+          from alembic.script import ScriptDirectory
+          from skycat.config import CatalogDatabaseConfig
+          from skycat.database.migrate import make_alembic_config
+
+          script = ScriptDirectory.from_config(make_alembic_config(CatalogDatabaseConfig()))
+          heads = script.get_heads()
+          revisions = list(script.walk_revisions())
+          assert len(heads) == 1, f"expected one packaged head, got {heads}"
+          assert revisions, "no migrations shipped in the wheel"
+          print(f"packaged migrations: {len(revisions)} revisions, head {heads[0]}")
+          PY
+
+  required:
+    # The one status check branch protection should require. Internal jobs can be
+    # renamed, split, or added without touching repository settings — but every
+    # must-pass job has to be listed in `needs` or it stops protecting `main`.
+    name: "required: ci"
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [skycat, unit-matrix, migration-graph, package-build]
+    steps:
+      - name: Fail unless every required job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"'
+          if echo "$RESULTS" | jq -e 'any(.[]; .result != "success")' >/dev/null; then
+            echo "::error::a required CI job failed, was cancelled, or was skipped"
+            exit 1
+          fi
+          echo "all required CI jobs succeeded"

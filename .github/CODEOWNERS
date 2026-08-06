@@ -1,0 +1,28 @@
+# Skycat code owners.
+#
+# Skycat is a public repository with a closed maintenance model: anyone may open
+# a pull request, but the paths below are the ones where an unreviewed change
+# does lasting damage, and they require the maintainer's review.
+#
+# Paired with branch protection ("Require review from Code Owners") this is what
+# makes the model enforceable rather than customary — see docs/CI.md.
+
+# Default owner for anything not matched below.
+*                       @archon774
+
+# The CI definition. A workflow change can disable every other check in this
+# repository, so it reviews like a permission change, not like configuration.
+/.github/               @archon774
+
+# Schema migrations. Applied against production catalog databases holding
+# hundreds of millions of rows, where a bad revision is not revertible by
+# reverting the commit.
+/skycat/migrations/     @archon774
+
+# Deployment assets: the Compose stack, the PostGIS image, and the Kubernetes
+# Jobs that operators copy into real clusters.
+/infra/                 @archon774
+
+# Packaging and the dependency lockfile — the supply chain for every install.
+/pyproject.toml         @archon774
+/uv.lock                @archon774

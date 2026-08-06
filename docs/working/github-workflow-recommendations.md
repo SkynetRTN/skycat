@@ -1,12 +1,35 @@
 ---
-status: working
+status: implemented
 reviewed: 2026-08-06
 branch: dev
 authority: code-inspection
-implementation: not-started
+implementation: workflows-landed-2026-08-06
 ---
 
 # GitHub workflow recommendations
+
+> **Implementation status (2026-08-06).** Recommendations 1–13 have landed, plus
+> CODEOWNERS; see [`docs/CI.md`](../CI.md) for the resulting workflow map, the
+> required-check set, and how to run each check locally. One item was
+> deliberately left out and is documented there: the `feature → dev → main`
+> PR-target rule (an unwritten policy). Branch protection itself is a repository
+> setting and still has to be applied by an admin — `docs/CI.md` has the
+> settings list and the equivalent `gh api` call.
+>
+> CODEOWNERS was implementable after all: the planning note conditions it on
+> ownership being clear, and `pyproject.toml` now names James Atkisson
+> (`@archon774`) as the active maintainer. Skycat is a public repository with a
+> closed maintenance model, so CODEOWNERS plus "Require review from Code Owners"
+> is what makes that model enforceable rather than customary.
+>
+> Two deviations from the scope below, both to keep required checks workable:
+> `migration graph`, `package build`, and `dependency review` run on every PR
+> rather than path-filtered, because a required check skipped by a path filter
+> stays queued as *Expected* and blocks the merge forever. And the text below
+> describes `ci.yml` as a working baseline — it was not. The job name on line 15
+> made it invalid YAML (`name: skycat: ruff, pyright, pytest`, an unquoted
+> scalar containing `": "`); `actionlint` catches exactly this, and the name is
+> now quoted.
 
 This report scopes recommended GitHub Actions jobs and branch-protection checks
 for Skycat. It is intentionally a planning document only: no workflow changes
