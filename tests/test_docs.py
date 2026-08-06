@@ -10,9 +10,10 @@ ruff, pyright, nor vulture could see it.
 So: every ``skycat`` command and flag shown in the docs must be real, and every
 ``CatalogReader`` method and keyword argument in a Python example must exist.
 
-Only user-facing docs are checked. The design review under docs/internal/
-is deliberately excluded: it is a dated snapshot of a review, not a description
-of the current API, and pinning it to today's code would be wrong.
+Only stable user-facing docs are checked. Working review notes under
+``docs/working/`` are deliberately excluded: they are dated snapshots of open
+work, not descriptions of the current API, and pinning them to today's code
+would be wrong.
 """
 
 from __future__ import annotations
