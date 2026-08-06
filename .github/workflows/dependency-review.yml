@@ -23,12 +23,19 @@ jobs:
     name: dependency review
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Review dependency changes
-        uses: actions/dependency-review-action@v4
+        # Exact version, unlike every other action here, which tracks a moving
+        # major. This repository publishes its majors as *branches* rather than
+        # tags, and zizmor's ref-confusion audit flags `@v5` as resolvable from
+        # either namespace — a real ambiguity about what code runs, and a
+        # blocking finding in `required: workflow safety`. The exact tag is
+        # unambiguous. Bump it deliberately; there is no moving `v5` tag to
+        # track.
+        uses: actions/dependency-review-action@v5.0.0
         with:
           # High and critical block; lower severities are reported in the job
           # summary. Transitive advisories routinely land before an upstream fix
