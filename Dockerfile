@@ -11,7 +11,7 @@ RUN mkdir -p skycat \
 
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS runtime
 
-LABEL org.opencontainers.image.source="https://github.com/SkynetRTN/skycat"
+LABEL org.opencontainers.image.title="skycat"
 
 ENV UV_PROJECT_ENVIRONMENT=/opt/venvs/skycat
 ENV PATH="/opt/venvs/skycat/bin:${PATH}"

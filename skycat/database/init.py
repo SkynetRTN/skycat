@@ -2,7 +2,7 @@
 
 ``initialize_catalog_database`` is **non-destructive**: it enables PostGIS,
 creates/refreshes roles + grants, ensures the schemas, and applies Alembic
-migrations. It never drops anything and never touches ``sky``.
+migrations. It never drops anything.
 
 ``reset_catalog_database`` is the explicit, guarded **dev-only** destructive
 operation (drops the catalog schemas — not the database, not the volume, not the
@@ -56,7 +56,7 @@ def _bootstrap_config(settings: CatalogSettings):
 
 def initialize_catalog_database(settings: CatalogSettings) -> InitResult:
     boot = _bootstrap_config(settings)
-    boot.assert_not_primary_database()
+    boot.assert_not_reserved_database()
 
     engine = create_catalog_engine(boot, pool_size=1, max_overflow=0)
     try:
@@ -88,7 +88,7 @@ def initialize_catalog_database(settings: CatalogSettings) -> InitResult:
 
     # 6. Migrations as the owner/migrator role.
     admin = settings.config_for(CatalogRole.ADMIN)
-    admin.assert_not_primary_database()
+    admin.assert_not_reserved_database()
     upgrade(admin, "head")
 
     # 7. Hand the data + staging objects to the ingest role, then catch-all
@@ -131,11 +131,11 @@ def reset_catalog_database(
     """DESTRUCTIVE (dev only): drop the catalog schemas.
 
     Drops ``catalog_data`` / ``catalog_staging`` / ``catalog_registry`` (CASCADE)
-    — never the database, never the Docker volume, never the source files, never
-    ``sky``. Re-run ``init`` afterwards to rebuild.
+    — never the database, never the Docker volume, never the source files. Re-run
+    ``init`` afterwards to rebuild.
     """
     boot = _bootstrap_config(settings)
-    boot.assert_not_primary_database()
+    boot.assert_not_reserved_database()
 
     if not force:
         raise CatalogConfigError(

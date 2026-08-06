@@ -1,9 +1,8 @@
-"""``CatalogReader`` — the read path consumers should use.
+"""``CatalogReader`` — pooled read-only access to the catalog store.
 
-Every consumer (the optical pipeline, the public-api ``/catalogs`` router, future
-workers) otherwise rewrites the same three lines: load settings, build a reader
-engine, resolve the active release on every call. This module does it once, and
-adds the two behaviours a shared read path needs:
+Client applications otherwise rewrite the same three lines: load settings, build
+a reader engine, resolve the active release on every call. This module does it
+once, and adds the two behaviours a shared read path needs:
 
 * **Active-release caching.** Resolving the active release is a registry query
   on the hot path of every cone search. Activation is a rare, deliberate
@@ -11,13 +10,12 @@ adds the two behaviours a shared read path needs:
   and a query becomes a single indexed round trip. A newly activated release is
   picked up within the TTL; :meth:`CatalogReader.invalidate` forces it sooner.
 * **A default statement timeout.** ``SKYCAT_DB_STATEMENT_TIMEOUT`` exists but
-  nothing sets it, so one pathological query can wedge a single-threaded worker
+  nothing sets it, so one pathological query can monopolize a worker process
   indefinitely. Reader connections get a bounded timeout unless configured
   otherwise.
 
-Sync by design: FastAPI runs sync dependencies in its threadpool and the
-pipeline is sync. The instance is thread-safe and meant to be held at app /
-worker scope — one pooled engine, shared.
+The instance is thread-safe and meant to be held at application or worker scope:
+one pooled engine, shared.
 
     reader = CatalogReader.from_env()
     stars = reader.cone("apass", ra, dec, radius_deg=0.2,
@@ -68,7 +66,7 @@ class _CachedRelease:
 class CatalogReader:
     """Pooled, read-only entry point to the catalog store.
 
-    Holds one engine bound to the ``catalog_reader`` role. Consumers speak
+    Holds one engine bound to the ``catalog_reader`` role. Callers speak
     (family, ra, dec, radius, band, order, limit) — no SQLAlchemy or PostGIS
     detail crosses this boundary.
     """
@@ -114,7 +112,7 @@ class CatalogReader:
 
     def _create_engine(self) -> Engine:
         cfg = self._settings.config_for(CatalogRole.READER)
-        cfg.assert_not_primary_database()
+        cfg.assert_not_reserved_database()
         # An explicitly configured timeout always wins; the default only fills
         # the gap when nothing is set.
         if cfg.statement_timeout_ms is None and self._statement_timeout_ms:

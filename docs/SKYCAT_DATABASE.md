@@ -1,22 +1,14 @@
 # Skycat database
 
-A **standalone** PostgreSQL/PostGIS store for large local astronomical reference
-catalogs (APASS DR6/DR10, VSX, and future families). It is architecturally
-separate from `skynet-db` and the primary `sky` database — its own database
-(`catalogs`), Compose service (`skycat-postgres`, host port **5433**), volume
+A **standalone** PostgreSQL/PostGIS store for building and querying versioned
+local astronomical reference catalogs. It owns its own database (`catalogs`),
+Compose service (`skycat-postgres`, host port **5433**), volume
 (`catalog_postgres_data`), SQLAlchemy metadata, Alembic environment, roles, and
 configuration namespace (`SKYCAT_DB_*`).
 
 The package and its full documentation live in this standalone repository. See
 [`README.md`](../README.md) for the full package guide; this page is the
 operator quick-reference.
-
-> **Bringing the local catalog online for the optical pipeline?** Not yet
-> possible: skycat has no pipeline consumer on this branch. The worker
-> integration — backend-selection modes, the fallback adapter, and the
-> step-by-step rollout runbook (`SKYCAT_LOCAL_ROLLOUT.md`) — arrives with the
-> pipeline-integration PR. Until then this page covers provisioning and
-> operating the catalog store itself.
 
 ## Architecture
 
@@ -79,6 +71,6 @@ migrations.
 ## Safety
 
 `docker compose down` never deletes the catalog volume; active releases can't be
-dropped without `--force`; the package refuses to migrate/ingest against `sky`;
-production-like targets get extra guards; source files are read-only and never
-modified or deleted.
+dropped without `--force`; the package refuses to migrate/ingest against
+reserved PostgreSQL maintenance databases; production-like targets get extra
+guards; source files are read-only and never modified or deleted.

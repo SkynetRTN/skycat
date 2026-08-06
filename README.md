@@ -1,9 +1,11 @@
 # Skycat
 
-A **standalone** PostgreSQL/PostGIS store for large local astronomical reference
-catalogs — APASS DR6, APASS DR10, VSX, Landolt (1992 + 2009) and Stetson
-globular-cluster standards, plus (by design) future families such as
-Pan-STARRS, 2MASS, UCAC5, Tycho-2, SkyMapper, USNO-B1.0.
+A **standalone** package for building and querying versioned local
+PostgreSQL/PostGIS databases from VizieR/CDS-style astronomical reference
+catalogs. Skycat ships support for APASS DR6, APASS DR10, VSX, Landolt
+(1992 + 2009), and Stetson globular-cluster standards, plus an extension pattern
+for future families such as Pan-STARRS, 2MASS, UCAC5, Tycho-2, SkyMapper, and
+USNO-B1.0.
 
 | Family | Releases | Source (CDS) | Parser format | Rows | Provider |
 |--------|----------|--------------|---------------|------|----------|
@@ -12,26 +14,22 @@ Pan-STARRS, 2MASS, UCAC5, Tycho-2, SkyMapper, USNO-B1.0.
 | `landolt` | 1992, 2009 | II/183A, J/AJ/137/4186 | `landolt_1992_dat` / `landolt_2009_dat` | 526 / 595 | Landolt |
 | `stetson` | StetsonGlobs | J/MNRAS/485/3042 | `stetson_globs_dat` | 4.89M | StetsonGlobs |
 
-It is deliberately **independent** of `skynet-db` and of the primary `sky`
-operational database. It has its own SQLAlchemy declarative base, metadata,
-engine/session factory, Alembic environment, schemas, database roles, and
-configuration namespace (`SKYCAT_DB_*`). It is never wired into
-`skynet_db.db.initialization.initialize_db`, never added to the `sky`
-`reset-db`, and never imports `skynet_db`.
+It has its own SQLAlchemy declarative base, metadata, engine/session factory,
+Alembic environment, schemas, database roles, and configuration namespace
+(`SKYCAT_DB_*`). It is intended to be used as an independent catalog-ingestion
+and query package, not as an add-on to a larger service.
 
 ---
 
-## Why a separate database?
+## Why a local catalog database?
 
 Reference catalogs are large (tens to hundreds of millions of rows), immutable
-once published, versioned by release, and queried spatially. They have an
-entirely different lifecycle from operational `sky` data. Keeping them in their
-own database (`catalogs`) on their own PostGIS server:
+once published, versioned by release, and queried spatially. Keeping them in
+their own database (`catalogs`) on their own PostGIS server:
 
-- isolates their storage, vacuum, backup, and connection pools from `sky`;
-- lets them be (re)built/ingested without touching operational data;
-- lets a process hold a `sky` session **and** a `catalogs` session at once,
-  with no shared base/metadata/engine.
+- isolates their storage, vacuum, backup, and connection pools;
+- lets releases be rebuilt and validated without interrupting current queries;
+- keeps catalog schemas, metadata, migrations, and roles in one bounded package.
 
 ```
 Docker Compose project: skycat
@@ -45,12 +43,12 @@ Docker Compose project: skycat
 | Concern | This package |
 |---|---|
 | Declarative base | `skycat.database.base.CatalogBase` (own `MetaData`) |
-| Database | `catalogs` (never `sky`) |
+| Database | `catalogs` by default; mutating commands refuse reserved DB names |
 | Schemas | `catalog_registry`, `catalog_data`, `catalog_staging` |
 | Roles | `catalog_owner` (migrator), `catalog_ingest`, `catalog_reader` (+ bootstrap) |
 | Migrations | catalog-owned Alembic env (`skycat/migrations`) |
 | Spatial | `geography(Point,4326)` GENERATED column + GiST, spherical cone search |
-| Config | `SKYCAT_DB_*` (never `SHARED_DB_*` / `SKYNET_<APP>_DB_*`) |
+| Config | `SKYCAT_DB_*` |
 | CLI | `skycat …` |
 
 ### PostgreSQL schemas
@@ -109,7 +107,7 @@ staging/prod/Kubernetes endpoints.
 | `SKYCAT_DB_BACKEND` | `postgresql+psycopg` | SQLAlchemy driver |
 | `SKYCAT_DB_HOST` | `127.0.0.1` | `skycat-postgres` inside Compose |
 | `SKYCAT_DB_PORT` | `5433` | `5432` inside Compose |
-| `SKYCAT_DB_NAME` | `catalogs` | refuses `sky` |
+| `SKYCAT_DB_NAME` | `catalogs` | mutating commands refuse reserved DB names |
 | `SKYCAT_DB_USER` / `_PASSWORD` | `catalog_reader` / — | default identity |
 | `SKYCAT_DB_SSLMODE` | — | libpq sslmode |
 | `SKYCAT_DB_POOL_SIZE` / `_MAX_OVERFLOW` / `_POOL_RECYCLE` / `_POOL_TIMEOUT` / `_POOL_PRE_PING` | 10 / 5 / 300 / 30 / true | pool tuning |
@@ -118,7 +116,7 @@ staging/prod/Kubernetes endpoints.
 | `SKYCAT_DB_BOOTSTRAP_USER` / `_PASSWORD` | — | init only (DBA/superuser) |
 | `SKYCAT_DB_ADMIN_USER` / `_PASSWORD` | — | owner / migrator |
 | `SKYCAT_DB_INGEST_USER` / `_PASSWORD` | — | bulk loader |
-| `SKYCAT_DB_READER_USER` / `_PASSWORD` | — | read-only consumer |
+| `SKYCAT_DB_READER_USER` / `_PASSWORD` | — | read-only query role |
 | `SKYCAT_DATA_ROOT` | `/srv/agents/catalogs` | read-only source root |
 | `SKYCAT_WORK_ROOT` | `/tmp/skycat-work` | writable scratch |
 
@@ -140,7 +138,8 @@ From the host:    host=127.0.0.1         port=5433
 - **`catalog_reader`** — read-only: registry + active/historical data, cone
   searches, crossmatch. Cannot alter schemas, write rows, or activate releases.
 
-Ordinary query consumers must connect as `catalog_reader`, never bootstrap/owner.
+Read-only query clients should connect as `catalog_reader`, never bootstrap or
+owner.
 
 ---
 
@@ -280,13 +279,13 @@ skycat cone   stetson --ra 250.4234 --dec 36.4613 --radius-arcmin 1 --explain  #
 
 - **Landolt** stores `V` plus the five color indices (`B-V`, `U-B`, `V-R`,
   `R-I`, `V-I`) and their errors. The individual **U/B/R/I** bands are *not*
-  stored — the optical provider derives them at query time from V + colors,
-  reproducing the remote `LandoltCatalog` derivation byte-for-byte
+  stored — compatibility helpers can derive them at query time from V + colors,
+  reproducing the common VizieR-backed `LandoltCatalog` derivation
   (`B = V + (B-V)`, `U = B + (U-B)`, `R = V − (V-R)`,
   `I = ((R − (R-I)) + (V − (V-I)))/2`, including the remote's U-error-from-V-R
   quirk). `native_id` is the star designation (e.g. `TPHE A`, `92 309`).
-  The remote VizieR provider targets **II/183A = Landolt 1992**, so for a strict
-  backend parity comparison query the explicit `1992` release.
+  VizieR catalog **II/183A = Landolt 1992**, so for a strict comparison against
+  that source, query the explicit `1992` release.
 - **Stetson** stores U/B/V/R/I with per-band counts and quality columns. The
   `Star` id is unique only *within* a cluster (matching the remote
   `col_mapping['id'] = 'Star'`); `native_id` therefore repeats across clusters,
@@ -345,9 +344,9 @@ production → mark READY → (explicit) ATTACH+ACTIVATE → record completion`.
 - A new release is built as a **detached** table, indexed, then `ATTACH
   PARTITION` — so activation is atomic and never rewrites existing rows.
 - A failed/incomplete release **cannot** become active. The previous active
-  release keeps serving queries until the new one is fully READY and explicitly
-  activated. At most one active release per family (enforced by a partial unique
-  index).
+  release keeps serving default queries until the new one is fully READY and
+  explicitly activated. At most one active release per family (enforced by a
+  partial unique index).
 - Imports are idempotent on (family, release, source checksum, importer version,
   schema version). Malformed/duplicate rows are recorded with reasons, never
   silently dropped. Destructive replacement is never the default.
@@ -363,27 +362,24 @@ See [docs](docs) and the module docstrings for details.
 ## Release policy
 
 Releases are a **deployment mechanism, not a science dimension.** They exist so a
-DR upgrade is a safe, atomic, reversible operation — not so that callers can pick
-which data release to calibrate against.
+DR upgrade is a safe, atomic, reversible operation. Default queries use the
+active release unless a command or API call explicitly requests another release.
 
 - **One active release per family** (enforced by a partial unique index).
-  Consumers never name a release; they get the active one. A DR upgrade is one
-  `skycat activate`, invisible to every consumer.
+  A DR upgrade is one `skycat activate`; default queries automatically use the
+  newly active release.
 - **Retain at most the previous (superseded) release** for rollback and for
   re-deriving old calibrations. `remove-release` anything older once the new DR
   has served for an agreed soak period. Do not plan for N simultaneously-live
   DRs.
-- **`--release` is an ops and parity-testing affordance** — rolling back, or
-  comparing the local store against a remote provider that mirrors an older
-  release (VizieR serves Landolt 1992 while 2009 is active). It is **not**
-  exposed through the public API. The active release id may be *returned* for
-  reproducibility; if a science case ever genuinely needs pinned releases, add it
-  then.
+- **`--release` is an operations and parity-testing affordance** — rolling back,
+  or comparing the local store against a remote source that mirrors an older
+  release (VizieR serves Landolt 1992 while 2009 may be active). Query results
+  include release identity for reproducibility.
 
 Blue/green is the point: stage DR11 beside a live DR10, validate it fully,
-activate atomically, and roll back by re-activating the superseded release. For a
-store that feeds photometric calibration, a botched import must never degrade the
-pipeline.
+activate atomically, and roll back by re-activating the superseded release. A
+bad import should never degrade default query results.
 
 ---
 
@@ -433,7 +429,7 @@ generic.
 
 ## Data safety
 
-- Refuses to migrate/ingest against `sky` (or other reserved DB names).
+- Refuses to migrate/ingest against reserved PostgreSQL database names.
 - Production-like hosts/DB names get extra destructive-operation guards.
 - Active releases can't be dropped without explicit deactivate/force.
 - Source files are read-only; no catalog command deletes `/srv/agents/catalogs`.
@@ -496,34 +492,14 @@ family+release as the ingest role. Neither drops the database nor runs on
 ordinary app startup. See `infra/kubernetes/deploy/base/jobs/skycat-*.yaml` for
 starter Kubernetes manifests.
 
-### Rename migration boundaries
-
-The package, import, CLI, configuration, image, Compose service, Kubernetes
-Jobs, and Job-only Secret use Skycat names exclusively. Operators must provide
-all package configuration through `SKYCAT_*`; runtime compatibility aliases
-are intentionally not accepted.
-
-Database `catalogs`, schemas `catalog_registry`/`catalog_data`/
-`catalog_staging`, roles `catalog_owner`/`catalog_ingest`/`catalog_reader`, and
-existing volumes remain unchanged because they contain persisted data or are
-shared database contracts. Reuse those resources in place; do not recreate or
-copy their data for this application rename. Create `skycat-admin-secrets`
-with the existing secret values before applying `skycat-init`,
-`skycat-migrate`, or `skycat-ingest`, then retire any superseded Secret only
-after the Skycat Jobs are verified.
-
 ---
 
-## Consumers
-
-**Skycat has no consumers yet** — the optical-pipeline integration is a separate,
-forthcoming PR. This section describes the interface consumers will use, so the
-first one does not invent its own.
+## Python API
 
 Use `CatalogReader`, not the query functions directly. It owns a pooled reader
-engine, caches each family's active release (60s TTL — activation is rare), and
-applies a default `statement_timeout` so one pathological query cannot wedge a
-worker:
+engine, caches each family's active release (60s TTL; activation is rare), and
+applies a default `statement_timeout` so one pathological query cannot monopolize
+a worker process:
 
 ```python
 from skycat import CatalogReader
@@ -537,16 +513,9 @@ row = reader.lookup("apass", "090-0000001")
 
 **Pass `order_by` whenever you also pass `limit`.** The default ordering is by
 angular separation, so a capped cone returns the stars nearest the *centre* — in
-a dense field that is a different, fainter star set than the brightest N, and for
-photometric calibration it biases the fit. Ordering by a magnitude column
-(ascending = brightest) is what nearly every consumer actually wants.
-
-**Direct DB vs the public API.** Anything in-cluster and Python (the pipeline,
-schedulers, workers) uses this package directly over the `catalog_reader` role —
-no HTTP hop, pooled connections. Anything remote or non-Python (browsers, the
-SDKs, SkyNodes at telescope sites) goes through the public API. All SQL and
-PostGIS stays inside this package; consumers speak (family, ra, dec, radius,
-band, order, limit).
+a dense field that is a different, fainter star set than the brightest N. For
+most photometric workflows, ordering by a magnitude column (ascending =
+brightest) is the expected behavior.
 
 The underlying functions (`cone_search`, `lookup_native_id`, `batch_crossmatch`)
 remain available and accept a caller-managed `engine=`, but `CatalogReader` is

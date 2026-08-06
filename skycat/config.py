@@ -1,9 +1,9 @@
 """Configuration for the standalone catalog database.
 
 The catalog database has its **own** configuration namespace
-(``SKYCAT_DB_*``) and is deliberately decoupled from ``skynet_db`` and
-the shared ``SHARED_DB_*`` / ``SKYNET_<APP>_DB_*`` namespaces — connecting to
-the catalog store must never reuse the operational ``sky`` connection settings.
+(``SKYCAT_DB_*``). Connecting to the catalog store should always be explicit, so
+catalog ingestion and migration commands do not accidentally reuse another
+application's PostgreSQL settings.
 
 The same ``CatalogDatabaseConfig`` works for:
 
@@ -112,17 +112,18 @@ class CatalogDatabaseConfig:
         lowered = f"{self.host} {self.name}".lower()
         return any(marker in lowered for marker in PRODUCTION_DB_NAME_MARKERS)
 
-    def assert_not_primary_database(self) -> None:
-        """Refuse to operate against ``sky`` (or other reserved DB names).
+    def assert_not_reserved_database(self) -> None:
+        """Refuse to operate against reserved PostgreSQL database names.
 
         This is the package's hard guarantee that catalog migrations / ingestion
-        can never be pointed at the operational database.
+        cannot be pointed at a maintenance database.
         """
         if self.is_forbidden_database():
             raise CatalogConfigError(
                 f"Refusing catalog operation against database {self.name!r}: the "
                 f"catalog store must use a dedicated database (expected "
-                f"{EXPECTED_DATABASE_NAME!r}), never the primary `sky` database."
+                f"{EXPECTED_DATABASE_NAME!r}), never a PostgreSQL maintenance "
+                "database."
             )
 
     def with_credentials(self, user: str, password: str) -> "CatalogDatabaseConfig":

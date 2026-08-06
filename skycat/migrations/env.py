@@ -1,9 +1,9 @@
 """Alembic environment for the catalog database.
 
-* Target metadata is **only** ``CatalogBase.metadata`` — never ``skynet_db``'s.
+* Target metadata is **only** ``CatalogBase.metadata``.
 * The URL is resolved from ``SKYCAT_DB_*`` (admin/owner role) unless
   overridden with ``-x url=...`` / ``SKYCAT_ALEMBIC_URL``.
-* Refuses to run against the primary ``sky`` database.
+* Refuses to run against reserved PostgreSQL maintenance databases.
 * The Alembic version table lives in the ``catalog_registry`` schema; the three
   catalog schemas are ensured to exist before migrations run so a fresh database
   bootstraps cleanly.
@@ -45,11 +45,11 @@ def _resolve_url() -> str:
     if url:
         # Guard a directly-supplied URL too.
         name = url.rsplit("/", 1)[-1].split("?", 1)[0]
-        CatalogDatabaseConfig(name=name).assert_not_primary_database()
+        CatalogDatabaseConfig(name=name).assert_not_reserved_database()
         return url
     settings = load_settings()
     cfg = settings.config_for(CatalogRole.ADMIN)
-    cfg.assert_not_primary_database()
+    cfg.assert_not_reserved_database()
     return cfg.url()
 
 

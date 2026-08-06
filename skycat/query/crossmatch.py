@@ -57,7 +57,7 @@ def batch_crossmatch(
     own_engine = engine is None
     if engine is None:
         cfg = settings.config_for(role)
-        cfg.assert_not_primary_database()
+        cfg.assert_not_reserved_database()
         engine = create_catalog_engine(cfg, pool_size=1, max_overflow=1)
     limit = 1 if nearest_only else max(1, max_candidates)
     radius_m = degrees_to_meters(radius_deg)

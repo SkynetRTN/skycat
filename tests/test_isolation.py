@@ -1,24 +1,24 @@
-"""Architectural isolation from skynet-db and the primary `sky` database."""
+"""Architectural isolation for the standalone catalog schema."""
 
 from __future__ import annotations
 
-import sys
 
-
-def test_importing_catalogs_does_not_import_skynet_db():
-    # Importing the whole package (incl. models) must not pull in skynet_db.
+def test_importing_catalogs_keeps_catalog_metadata_local():
+    # Importing the whole package (incl. models) should register tables only on
+    # Skycat's own metadata.
     import skycat  # noqa: F401
     import skycat.models  # noqa: F401
 
-    assert "skynet_db" not in sys.modules
+    from skycat.database.base import CatalogBase, catalog_metadata
+
+    assert CatalogBase.metadata is catalog_metadata
 
 
 def test_separate_metadata_and_base():
     from skycat.database.base import CatalogBase, catalog_metadata
 
     assert CatalogBase.metadata is catalog_metadata
-    # No skynet_db Base in the MRO / module graph.
-    assert "skynet_db" not in type(CatalogBase).__module__
+    assert CatalogBase.__module__ == "skycat.database.base"
 
 
 def test_all_tables_live_in_catalog_schemas():
@@ -33,8 +33,9 @@ def test_all_tables_live_in_catalog_schemas():
     assert "catalog_registry.catalog_family" in names
 
 
-def test_no_catalog_object_model_reused():
-    # We define our own ApassSource/VsxSource — not skynet_db's CatalogObject.
+def test_catalog_family_models_are_explicit():
+    # Each supported family has its own typed model instead of reusing a generic
+    # catalog-object table.
     from skycat import models
 
     assert hasattr(models, "ApassSource")

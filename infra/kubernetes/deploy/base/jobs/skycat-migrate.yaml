@@ -4,8 +4,9 @@
 #
 # Runs `skycat migrate` as the owner/migrator role (Alembic upgrade
 # only). Never drops the database, never imports catalog data, verifies the
-# target is `catalogs` (not `sky`), and fails if PostGIS is unavailable. The
-# owner/migrator credentials come from SKYCAT_DB_ADMIN_USER/_PASSWORD.
+# target is `catalogs` (not a reserved PostgreSQL maintenance database), and
+# fails if PostGIS is unavailable. The owner/migrator credentials come from
+# SKYCAT_DB_ADMIN_USER/_PASSWORD.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -19,7 +20,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: skycat-migrate
-          image: ghcr.io/skynetrtn/skycat:stable
+          image: ghcr.io/your-org/skycat:stable
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

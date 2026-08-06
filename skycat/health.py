@@ -62,7 +62,7 @@ def health_report(
     report = HealthReport(target=cfg.target_summary())
 
     # Guard first (no connection needed).
-    report.add("not_primary_database", not cfg.is_forbidden_database(),
+    report.add("not_reserved_database", not cfg.is_forbidden_database(),
                f"target database is {cfg.name!r}")
     if cfg.is_forbidden_database():
         return report

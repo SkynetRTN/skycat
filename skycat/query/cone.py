@@ -80,9 +80,8 @@ def _order_by_clause(table, order_by: str):
 
     Ascending on a magnitude column is brightest-first, which is what a capped
     cone search almost always wants: nearest-N and brightest-N return different
-    star sets in a dense field, and consumers (finder charts, saturation models,
-    photometric calibration) care about the brightest. Rows with no value sort
-    last rather than displacing real matches.
+    star sets in a dense field, and many workflows care about the brightest.
+    Rows with no value sort last rather than displacing real matches.
     """
     if order_by == "geom":
         raise CatalogQueryError("Cannot order by the spatial column 'geom'")
@@ -186,7 +185,7 @@ def cone_search(
     own_engine = engine is None
     if engine is None:
         cfg = settings.config_for(role)
-        cfg.assert_not_primary_database()
+        cfg.assert_not_reserved_database()
         engine = create_catalog_engine(cfg, pool_size=2, max_overflow=2)
     try:
         if resolved is None:
@@ -242,7 +241,7 @@ def lookup_native_id(
     own_engine = engine is None
     if engine is None:
         cfg = settings.config_for(role)
-        cfg.assert_not_primary_database()
+        cfg.assert_not_reserved_database()
         engine = create_catalog_engine(cfg, pool_size=1, max_overflow=1)
     try:
         if resolved is None:
@@ -277,7 +276,7 @@ def cone_search_plan(
     """
     validate_radec(ra_deg, dec_deg)
     cfg = settings.config_for(CatalogRole.READER)
-    cfg.assert_not_primary_database()
+    cfg.assert_not_reserved_database()
     engine = create_catalog_engine(cfg, pool_size=1, max_overflow=1)
     try:
         with Session(engine) as session:

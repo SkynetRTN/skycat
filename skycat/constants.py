@@ -17,11 +17,10 @@ SCHEMA_DATA = "catalog_data"
 SCHEMA_STAGING = "catalog_staging"
 ALL_SCHEMAS = (SCHEMA_REGISTRY, SCHEMA_DATA, SCHEMA_STAGING)
 
-# Database the package is allowed to operate on. Refusing anything else is the
-# primary guard against accidentally migrating/ingesting into the operational
-# `sky` database (see config.CatalogDatabaseConfig.assert_not_primary_database).
+# Database the package expects by default. Refusing reserved names is the primary
+# guard against accidentally migrating/ingesting into a maintenance database.
 EXPECTED_DATABASE_NAME = "catalogs"
-FORBIDDEN_DATABASE_NAMES = ("sky", "postgres", "template0", "template1")
+FORBIDDEN_DATABASE_NAMES = ("postgres", "template0", "template1")
 
 # Database name substrings that mark a target as production-like; destructive
 # operations refuse to run against these without an explicit dangerous override.
@@ -90,14 +89,14 @@ class CatalogRole(str, enum.Enum):
     BOOTSTRAP = "bootstrap"  # container superuser / DBA — init only
     ADMIN = "admin"  # owner / migrator
     INGEST = "ingest"  # bulk loader + release metadata writer
-    READER = "reader"  # query / crossmatch consumer
+    READER = "reader"  # query / crossmatch role
     DEFAULT = "default"  # generic app identity (resolves to reader)
 
 
 # Concrete role names created inside the catalogs database.
 ROLE_OWNER = "catalog_owner"  # owns schemas + objects, applies migrations
 ROLE_INGEST = "catalog_ingest"  # NOLOGIN group + login member loads data
-ROLE_READER = "catalog_reader"  # read-only query consumer
+ROLE_READER = "catalog_reader"  # read-only query role
 
 # Internal schema version stamped onto releases; bump when the typed production
 # table shape for a family changes in a way that affects already-imported rows.

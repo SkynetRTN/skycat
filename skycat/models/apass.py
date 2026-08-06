@@ -13,8 +13,7 @@ magnitudes, errors, coordinates and the native id are always typed columns.
 ``release_id`` deliberately has **no** FK to the registry: attaching a
 hundred-million-row partition would otherwise trigger a full FK-validation scan.
 The registry remains the source of truth and ingestion only ever writes a valid
-release id. (This is an in-database design choice; it is *not* a cross-database
-reference into ``sky``.)
+release id.
 """
 
 from __future__ import annotations

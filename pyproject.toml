@@ -1,11 +1,11 @@
 [project]
 name = "skycat"
 version = "0.1.0"
-description = "Skycat: standalone PostgreSQL/PostGIS store for large local astronomical reference catalogs (APASS, VSX, …), independent from skynet-db and the primary `sky` database."
+description = "Skycat: build and query versioned local PostgreSQL/PostGIS databases from VizieR/CDS-style astronomical reference catalogs."
 readme = "README.md"
 requires-python = ">=3.11, <3.14"
 authors = [
-    { name = "Skynet RTN" },
+    { name = "Skycat maintainers" },
 ]
 dependencies = [
     "sqlalchemy ~= 2.0.38",
@@ -28,9 +28,7 @@ dev = [
 skycat = "skycat.cli.main:main_entry"
 
 [tool.uv.sources]
-# skycat is deliberately NOT coupled to skynet-db; it has no in-tree
-# path dependency. (Declared here for symmetry with the other packages should a
-# generic shared utility ever be extracted.)
+# skycat has no in-tree path dependencies.
 
 [tool.pytest.ini_options]
 markers = [
@@ -43,8 +41,7 @@ target-version = "py311"
 line-length = 110
 
 [tool.ruff.lint]
-# pyflakes (real bugs) + the bare-except / vanilla-raise safety sweep, mirroring
-# apps/sky-node-desktop/backend. skycat is greenfield and clean under this set.
+# pyflakes (real bugs) + the bare-except / vanilla-raise safety sweep.
 select = [
     "F",       # pyflakes (unused imports/names, real bugs)
     "ARG",     # unused arguments — dead parameters outlive the code that fed them
@@ -64,10 +61,9 @@ ignore = []
 "skycat/migrations/env.py" = ["S110", "BLE001"]
 
 [tool.pyright]
-# Basic-mode type gate mirroring apps/sky-node-desktop/backend: catch obvious
-# bugs (redeclarations, missing imports) without drowning in SQLAlchemy /
+# Basic-mode type gate: catch obvious bugs without drowning in SQLAlchemy /
 # GeoAlchemy generic-typing noise. High-volume categories are downgraded to
-# warning so the gate is "no NEW basic-mode errors"; tighten as follow-ups land.
+# warning so the gate is "no new basic-mode errors"; tighten as follow-ups land.
 include = ["skycat"]
 exclude = [".venv", "**/__pycache__"]
 pythonVersion = "3.11"

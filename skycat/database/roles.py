@@ -5,7 +5,7 @@ Three operational roles with least-privilege responsibilities:
 * ``catalog_owner``  — owns schemas/objects, applies migrations.
 * ``catalog_ingest`` — loads staging, inserts release data, creates partitions,
   writes registry metadata, builds indexes.
-* ``catalog_reader`` — read-only query/crossmatch consumer.
+* ``catalog_reader`` — read-only query/crossmatch role.
 
 All statements are idempotent so ``init`` can be re-run safely. Role creation and
 grants require a superuser/DBA (bootstrap) connection. On externally-provisioned

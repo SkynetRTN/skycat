@@ -21,7 +21,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: skycat-ingest
-          image: ghcr.io/skynetrtn/skycat:stable
+          image: ghcr.io/your-org/skycat:stable
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

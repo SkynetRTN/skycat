@@ -54,7 +54,7 @@ def _emit(ctx, data, human: str) -> None:
 @contextmanager
 def _session(settings, role: CatalogRole):
     cfg = settings.config_for(role)
-    cfg.assert_not_primary_database()
+    cfg.assert_not_reserved_database()
     engine = create_catalog_engine(cfg, pool_size=1, max_overflow=0)
     try:
         with Session(engine) as session:
@@ -314,7 +314,7 @@ def import_cmd(
 
     # Asking for --activate and not getting it is a failure of intent, and it must
     # not look like success: the K8s ingest Job would otherwise be marked Complete
-    # while the release sits in READY and consumers keep serving the old data.
+    # while the release sits in READY and default queries keep using old data.
     # The import itself is intact — re-run with --allow-warnings, or `activate`
     # explicitly, once the warnings have been read.
     if activate and not report.activated:

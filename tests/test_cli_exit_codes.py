@@ -2,9 +2,9 @@
 
 The K8s `skycat-ingest` Job's only success signal is the exit code. Before this,
 `import <fam> <rel> --activate` exited 0 even when activation was *withheld* —
-so the Job went Complete while the release sat in READY and consumers carried on
-serving the old data. The truncation guard (a short source warns, and warnings
-block auto-activation) made that path easy to hit.
+so the Job went Complete while the release sat in READY and default queries kept
+using old data. The truncation guard (a short source warns, and warnings block
+auto-activation) made that path easy to hit.
 
 No database: `import_release` is substituted, because what is under test is the
 CLI's decision about the report it gets back, not the import itself.

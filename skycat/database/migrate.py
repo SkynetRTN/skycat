@@ -25,7 +25,7 @@ _SCRIPT_LOCATION = _PACKAGE_DIR / "migrations"
 
 
 def make_alembic_config(config: CatalogDatabaseConfig) -> Config:
-    config.assert_not_primary_database()
+    config.assert_not_reserved_database()
     cfg = Config(str(_INI)) if _INI.exists() else Config()
     cfg.set_main_option("script_location", str(_SCRIPT_LOCATION))
     cfg.set_main_option("sqlalchemy.url", config.url())
@@ -50,7 +50,7 @@ def script_heads(config: CatalogDatabaseConfig) -> list[str]:
 
 
 def current_revision(config: CatalogDatabaseConfig) -> str | None:
-    config.assert_not_primary_database()
+    config.assert_not_reserved_database()
     engine = create_engine(config.url(), pool_pre_ping=True)
     try:
         with engine.connect() as conn:
@@ -60,4 +60,3 @@ def current_revision(config: CatalogDatabaseConfig) -> str | None:
             return ctx.get_current_revision()
     finally:
         engine.dispose()
-

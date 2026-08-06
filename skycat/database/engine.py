@@ -1,8 +1,7 @@
 """Engine + session construction for the catalog database.
 
-Owned entirely by this package — it does not reuse ``skynet_db``'s engine
-helpers or session factory, so a process can hold a ``sky`` session and a
-``catalogs`` session simultaneously without any shared state.
+Owned entirely by this package. A process can hold another application's DB
+session and a catalog DB session simultaneously without shared state.
 """
 
 from __future__ import annotations

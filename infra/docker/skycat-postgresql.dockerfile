@@ -11,12 +11,11 @@
 # unlike the amd64-only `postgis/postgis` tags. PostgreSQL 16 matches the local
 # PostgreSQL major version used for local development and CI.
 FROM imresamu/postgis:16-3.5
-LABEL org.opencontainers.image.source="https://github.com/SkynetRTN/skycat"
+LABEL org.opencontainers.image.title="skycat-postgres"
 
-# Dev-only bootstrap role + database, mirroring the `postgres` (sky) image's
-# pattern of baking well-known *development* credentials. Override every value
-# in Compose / production; never put real credentials here. The catalog store
-# uses a SEPARATE database (`catalogs`) and a SEPARATE volume from `sky`.
+# Dev-only bootstrap role + database. Override every value in Compose /
+# production; never put real credentials here. The catalog store uses a separate
+# database (`catalogs`) and volume.
 ENV POSTGRES_USER=catalog_admin
 ENV POSTGRES_PASSWORD=catalog
 ENV POSTGRES_DB=catalogs

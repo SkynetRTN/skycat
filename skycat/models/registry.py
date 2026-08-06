@@ -2,7 +2,7 @@
 
 These describe catalog *families* and their *releases* independently from the
 bulk catalog rows, and record ingestion runs, validation, and source manifests.
-They never reference any ``skynet_db`` / ``sky`` table.
+They never reference application tables outside the catalog schemas.
 """
 
 from __future__ import annotations

@@ -6,7 +6,8 @@
 # creates the operational roles (owner/ingest/reader) + grants, ensures the
 # schemas, hands the data objects to the ingest role, and applies Alembic
 # migrations. Non-destructive; verifies the target database is `catalogs`
-# (never `sky`) and fails clearly if PostGIS is unavailable.
+# (never a reserved PostgreSQL maintenance database) and fails clearly if
+# PostGIS is unavailable.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -20,7 +21,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: skycat-init
-          image: ghcr.io/skynetrtn/skycat:stable
+          image: ghcr.io/your-org/skycat:stable
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

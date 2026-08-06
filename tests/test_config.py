@@ -49,14 +49,14 @@ def test_docker_internal_vs_host_configs():
     assert ":5433/catalogs" in host.url()
 
 
-def test_refuses_primary_database():
+def test_refuses_reserved_database():
     with pytest.raises(CatalogConfigError):
-        CatalogDatabaseConfig(name="sky").assert_not_primary_database()
+        CatalogDatabaseConfig(name="postgres").assert_not_reserved_database()
     # case-insensitive
     with pytest.raises(CatalogConfigError):
-        CatalogDatabaseConfig(name="SKY").assert_not_primary_database()
+        CatalogDatabaseConfig(name="TEMPLATE1").assert_not_reserved_database()
     # catalogs is fine
-    CatalogDatabaseConfig(name="catalogs").assert_not_primary_database()
+    CatalogDatabaseConfig(name="catalogs").assert_not_reserved_database()
 
 
 def test_production_like_detection():

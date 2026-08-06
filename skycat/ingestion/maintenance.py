@@ -24,7 +24,7 @@ from ..validation import summarize, validate_production
 
 def table_sizes(settings: CatalogSettings) -> list[dict]:
     cfg = settings.config_for(CatalogRole.READER)
-    cfg.assert_not_primary_database()
+    cfg.assert_not_reserved_database()
     engine = create_catalog_engine(cfg, pool_size=1, max_overflow=0)
     try:
         with engine.connect() as conn:
@@ -50,7 +50,7 @@ def table_sizes(settings: CatalogSettings) -> list[dict]:
 def clean_staging(settings: CatalogSettings) -> list[str]:
     """Drop all staging tables. Never touches production or source files."""
     cfg = settings.config_for(CatalogRole.INGEST)
-    cfg.assert_not_primary_database()
+    cfg.assert_not_reserved_database()
     engine = create_catalog_engine(cfg, pool_size=1, max_overflow=0)
     dropped: list[str] = []
     try:
@@ -83,7 +83,7 @@ def remove_release(
     Refuses to remove an ACTIVE release unless ``force`` (which also detaches it).
     """
     cfg = settings.config_for(CatalogRole.INGEST)
-    cfg.assert_not_primary_database()
+    cfg.assert_not_reserved_database()
     engine = create_catalog_engine(cfg, pool_size=1, max_overflow=0)
     try:
         with Session(engine) as session:
@@ -132,7 +132,7 @@ def revalidate_release(
     """Re-run production validation (rows present, spatial index, coord ranges)
     on a release's partition and record a fresh ValidationSummary."""
     cfg = settings.config_for(CatalogRole.INGEST)
-    cfg.assert_not_primary_database()
+    cfg.assert_not_reserved_database()
     engine = create_catalog_engine(cfg, pool_size=1, max_overflow=0)
     try:
         with Session(engine) as session:

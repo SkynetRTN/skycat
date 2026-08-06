@@ -1,6 +1,6 @@
 """Ingestion lifecycle orchestrator.
 
-Runs the full pipeline for one (family, release):
+Runs the full ingestion flow for one (family, release):
 
     discover -> register family -> register release -> ingestion-run ->
     verify checksum -> stage (COPY) -> validate staging -> transform into a
@@ -197,7 +197,7 @@ def import_release(
     )
 
     ingest_cfg = settings.config_for(CatalogRole.INGEST)
-    ingest_cfg.assert_not_primary_database()
+    ingest_cfg.assert_not_reserved_database()
     engine = create_catalog_engine(ingest_cfg, pool_size=2, max_overflow=2)
 
     data_table = fam_def.data_table
