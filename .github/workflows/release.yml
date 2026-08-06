@@ -92,7 +92,7 @@ jobs:
 
           with tarfile.open(sdist) as archive:
               sdist_names = {"/".join(Path(member.name).parts[1:]) for member in archive.getmembers()}
-          required_sdist = {"pyproject.toml", "README.md", "docs/RELEASE.md", "CHANGELOG.md"}
+          required_sdist = {"pyproject.toml", "README.md", "docs/operations/release.md", "CHANGELOG.md"}
           missing = sorted(required_sdist - sdist_names)
           if missing:
               raise SystemExit(f"missing sdist files: {missing}")

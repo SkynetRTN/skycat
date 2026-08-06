@@ -1,6 +1,6 @@
 # Continuous integration
 
-Eight workflows under [`.github/workflows/`](../.github/workflows). Two of them
+Eight workflows under [`.github/workflows/`](../../.github/workflows). Two of them
 end in an aggregate job whose name is the thing branch protection should
 require; the rest are advisory or path-filtered.
 
@@ -92,7 +92,7 @@ schemas — are path-filtered and therefore stay advisory.
   `not-configured` is what this workflow needs.
 - **`secret scan`** uses the gitleaks *image*, not the Action, because the
   Action requires an organisation licence key. Allowlists live in
-  [`.gitleaks.toml`](../.gitleaks.toml); every entry there is a claim that the
+  [`.gitleaks.toml`](../../.gitleaks.toml); every entry there is a claim that the
   matched value is safe to be public. Scans both the working tree and full
   history, since a credential that was committed and later deleted is still
   published and still needs rotating.
@@ -205,7 +205,7 @@ those exact files without rebuilding.
 
 ### CODEOWNERS
 
-[`.github/CODEOWNERS`](../.github/CODEOWNERS) assigns the CI definition, schema
+[`.github/CODEOWNERS`](../../.github/CODEOWNERS) assigns the CI definition, schema
 migrations, deployment assets, and packaging to the active maintainer
 (`@archon774`, James Atkisson — also recorded in `pyproject.toml`). It is
 binding because `Protect Main` sets `require_code_owner_review`; without that,

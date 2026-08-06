@@ -43,7 +43,7 @@ in terms of production data and the easiest one to regret.
 `ingestion_run` and `validation_summary` rows cascade with it. The source
 checksum, the row counts, the importer version, the malformed-line examples — all
 of it. If the release is evidence for anything, export the registry query in
-[PROVENANCE.md](PROVENANCE.md) first. `--force` additionally allows removing the
+[provenance.md](../guides/provenance.md) first. `--force` additionally allows removing the
 **ACTIVE** release, which leaves the family with **no active release**: default
 queries then fail rather than falling back to an older one. That is deliberate —
 silently serving different data is worse — but it means `--force` here is an

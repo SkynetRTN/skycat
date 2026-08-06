@@ -1,20 +1,26 @@
 ---
-status: implemented
+status: archived
 reviewed: 2026-08-06
+archived: 2026-08-06
 branch: dev
 authority: code-inspection
-implementation: workflows-landed-2026-08-06
+implementation: complete
 ---
 
 # GitHub workflow recommendations
 
-> **Implementation status (2026-08-06).** Recommendations 1–13 have landed, plus
-> CODEOWNERS; see [`docs/CI.md`](../CI.md) for the resulting workflow map, the
-> required-check set, and how to run each check locally. One item was
+> **Archived — nothing here is outstanding.** Recommendations 1–13 landed on
+> 2026-08-06, plus CODEOWNERS; see
+> [`docs/operations/ci.md`](../../operations/ci.md) for the resulting workflow
+> map, the required-check set, and how to run each check locally. One item was
 > deliberately left out and is documented there: the `feature → dev → main`
-> PR-target rule (an unwritten policy). Branch protection itself is a repository
-> setting and still has to be applied by an admin — `docs/CI.md` has the
-> settings list and the equivalent `gh api` call.
+> PR-target rule (an unwritten policy).
+>
+> The last open item — branch protection, which workflows cannot configure —
+> has since been applied as **rulesets** rather than classic protection:
+> `Protect Main` and `Protect release tags` are both active. `docs/operations/ci.md`
+> documents the rules, the required-check contexts they name, and how to read
+> them back (`gh api …/rulesets`).
 >
 > CODEOWNERS was implementable after all: the planning note conditions it on
 > ownership being clear, and `pyproject.toml` now names James Atkisson

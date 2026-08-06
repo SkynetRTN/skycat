@@ -33,17 +33,17 @@ REPO_ROOT = PKG_ROOT
 
 DOCS = [
     PKG_ROOT / "README.md",
-    REPO_ROOT / "docs" / "SKYCAT_DATABASE.md",
-    REPO_ROOT / "docs" / "API_STABILITY.md",
-    REPO_ROOT / "docs" / "ADD_FAMILY.md",
-    REPO_ROOT / "docs" / "PROVENANCE.md",
-    REPO_ROOT / "docs" / "OPERATIONS.md",
-    REPO_ROOT / "docs" / "PERFORMANCE.md",
+    REPO_ROOT / "docs" / "reference" / "architecture.md",
+    REPO_ROOT / "docs" / "reference" / "api-stability.md",
+    REPO_ROOT / "docs" / "guides" / "add-family.md",
+    REPO_ROOT / "docs" / "guides" / "provenance.md",
+    REPO_ROOT / "docs" / "operations" / "runbook.md",
+    REPO_ROOT / "docs" / "operations" / "performance.md",
 ]
 #: Placeholder paths/flags that are illustrative by design. ``tycho2`` is the
 #: project's standing worked example for adding a family (README and
-#: ADD_FAMILY.md) — the day it becomes a real family, drop it from this tuple
-#: and the citations start being checked.
+#: guides/add-family.md) — the day it becomes a real family, drop it from this
+#: tuple and the citations start being checked.
 PLACEHOLDERS = ("000N", "<family>", "<release>", "tycho2")
 
 
@@ -51,6 +51,12 @@ def _docs() -> list[Path]:
     # The package is a standalone uv project; the repo-level docs may not be
     # present in every checkout. Its own README always is.
     return [d for d in DOCS if d.exists()]
+
+
+def _doc_id(path: Path) -> str:
+    # Repo-relative, because ``docs/``, ``docs/decisions/``, and the repo root
+    # each hold a README.md — bare names would collide into README.md0/1/2.
+    return str(path.relative_to(REPO_ROOT))
 
 
 def _all_markdown() -> list[Path]:
@@ -92,7 +98,7 @@ def _cli_surface() -> tuple[dict[str, set[str]], set[str]]:
 COMMANDS, GROUP_FLAGS = _cli_surface()
 
 
-@pytest.mark.parametrize("doc", _docs(), ids=lambda p: p.name)
+@pytest.mark.parametrize("doc", _docs(), ids=_doc_id)
 def test_documented_cli_commands_and_flags_exist(doc):
     problems = []
     for block in _code_blocks(doc.read_text(encoding="utf-8"), "bash"):
@@ -119,7 +125,7 @@ def test_documented_cli_commands_and_flags_exist(doc):
     )
 
 
-@pytest.mark.parametrize("doc", _docs(), ids=lambda p: p.name)
+@pytest.mark.parametrize("doc", _docs(), ids=_doc_id)
 def test_documented_catalogreader_api_exists(doc):
     """Methods and kwargs shown on a CatalogReader must be real."""
     problems = []
@@ -167,7 +173,7 @@ def _constructs_reader(func: ast.expr) -> bool:
     return False
 
 
-@pytest.mark.parametrize("doc", _docs(), ids=lambda p: p.name)
+@pytest.mark.parametrize("doc", _docs(), ids=_doc_id)
 def test_cited_source_files_exist(doc):
     missing = [
         path
@@ -177,7 +183,7 @@ def test_cited_source_files_exist(doc):
     assert not missing, f"{doc.name} cites files that do not exist: {missing}"
 
 
-@pytest.mark.parametrize("doc", _docs(), ids=lambda p: p.name)
+@pytest.mark.parametrize("doc", _docs(), ids=_doc_id)
 def test_group_flags_precede_the_subcommand(doc):
     """``skycat cone apass --json`` is a documented command that cannot run.
 
@@ -218,14 +224,15 @@ def test_group_flags_precede_the_subcommand(doc):
 _EXTERNAL_LINK = re.compile(r"^(https?:|mailto:|#)")
 
 
-@pytest.mark.parametrize("doc", _all_markdown(), ids=lambda p: str(p.name))
+@pytest.mark.parametrize("doc", _all_markdown(), ids=_doc_id)
 def test_relative_links_resolve(doc):
     """A moved doc takes its links with it, and nothing notices.
 
-    ``docs/design/skycat-design.md`` was moved twice and pointed at
-    ``../../../skycat/...`` — one level above the repository root — the whole
-    time. Neither ruff, pyright, nor the citation test above could see it,
-    because a markdown link is not a backticked path.
+    The design record (now ``docs/reference/architecture.md``) was moved twice
+    and pointed at ``../../../skycat/...`` — one level above the repository
+    root — the whole time. Neither ruff, pyright, nor the citation test above
+    could see it, because a markdown link is not a backticked path. This test
+    is what makes the ``docs/`` tree safe to reorganize.
     """
     text = doc.read_text(encoding="utf-8")
     broken = []

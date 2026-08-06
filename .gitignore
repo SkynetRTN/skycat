@@ -12,10 +12,10 @@ manifests/
 rejected/
 checkpoints/
 *.manifest.json
-# `skycat --json discover > inventory-<date>.json` (docs/PROVENANCE.md)
+# `skycat --json discover > inventory-<date>.json` (docs/guides/provenance.md)
 inventory-*.json
 
-# Source-mirror leftovers. docs/PROVENANCE.md mirrors CDS with wget, which
+# Source-mirror leftovers. docs/guides/provenance.md mirrors CDS with wget, which
 # leaves these behind when --reject misses one.
 index.html
 index.html.*

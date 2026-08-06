@@ -18,7 +18,7 @@ diagnosis; registry/ingestion-run rows are written on a separate connection so a
 failure is always recorded (release -> FAILED).
 
 Phase boundaries are logged as structured events on the ``skycat.ingestion``
-logger — see :func:`_event` and docs/OPERATIONS.md. An import of APASS DR10 runs
+logger — see :func:`_event` and docs/operations/runbook.md. An import of APASS DR10 runs
 for hours; without them the only signals are the registry row (written at the
 start and the end, nothing in between) and the row-count callback.
 """

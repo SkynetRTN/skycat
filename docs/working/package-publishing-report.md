@@ -1,9 +1,9 @@
 ---
-status: working
+status: open
 reviewed: 2026-08-07
 branch: dev
 authority: code-inspection + official-docs
-implementation: not-started
+implementation: repository-side complete; no release cut yet
 ---
 
 # Skycat package publishing report
@@ -12,8 +12,24 @@ This report describes what would be required to host Skycat as an installable
 Python package through GitHub for the near term, and what would still be needed
 to publish it later on PyPI or another package index.
 
-It is intentionally a planning document only. No packaging, metadata, workflow,
-or release-process changes are made by this report.
+> **Status: open — this is the one working note with work still in it.** The
+> repository side has landed since the report was written: `pyproject.toml`
+> declares `GPL-3.0-only` with `license-files`, `release.yml` builds and
+> verifies the wheel and sdist and publishes a draft through the protected
+> `github-release` environment, the `Protect release tags` ruleset guards the
+> tag namespace, `docs/operations/release.md` documents the process, and the
+> README documents both supported install paths.
+>
+> **What is actually left:** no tag has been pushed and no release exists
+> (`git tag -l` and `gh release list` are both empty), so the end-to-end check
+> the report asks for — `pip install` from a real GitHub Release asset URL — has
+> never been run. Until that dry run happens, this note stays out of
+> `archive/`. PyPI name reservation and a GitHub Pages index remain deliberately
+> deferred, not open work.
+
+The body below is the original planning text, unchanged. It is a planning
+document: no packaging, metadata, workflow, or release-process changes were made
+by the report itself.
 
 ## Executive summary
 
@@ -923,7 +939,7 @@ wheel/sdist contents, artifact tests, versioning, and release automation.
 - Protected `github-release` environment with required reviewer approval.
 - Complete `[project.urls]`.
 - Non-license classifiers and keywords.
-- Versioning and GitHub Release naming policy in `docs/RELEASE.md`.
+- Versioning and GitHub Release naming policy in `docs/operations/release.md`.
 - Version drift test for `pyproject.toml` and `skycat.__version__`.
 - GitHub-hosted installation and package-scope sections in `README.md`.
 - Changelog/release-notes policy through `CHANGELOG.md` and GitHub Releases.

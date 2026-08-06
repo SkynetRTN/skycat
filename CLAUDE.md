@@ -25,14 +25,15 @@ Use `--require-postgis` (or `SKYCAT_REQUIRE_POSTGIS=1`) before claiming a change
 it aborts collection with one clear message instead of 57 skips, and it is what CI runs.
 
 CI runs these plus a 3.11/3.12/3.13 unit matrix, Alembic graph validation, a wheel-install smoke
-test, and workflow/container/manifest/secret checks. `docs/CI.md` maps the workflows to their
-required-check names and gives container-based local equivalents for each.
+test, and workflow/container/manifest/secret checks. `docs/operations/ci.md` maps the workflows to
+their required-check names and gives container-based local equivalents for each.
 
-`docs/` also holds the contracts worth reading before changing behaviour: `API_STABILITY.md` (what
-may not move), `ADD_FAMILY.md` (the worked version of the six touch points), `PROVENANCE.md`
-(source layout, checksum modes), `OPERATIONS.md` (what each destructive command destroys, the
-`skycat.ingestion` structured events, credential rotation), `PERFORMANCE.md`, `RELEASE.md`, and
-`decisions/` for choices already settled.
+`docs/README.md` is the index. The contracts worth reading before changing behaviour:
+`reference/architecture.md` (the whole design in one pass), `reference/api-stability.md` (what may
+not move), `guides/add-family.md` (the worked version of the six touch points),
+`guides/provenance.md` (source layout, checksum modes), `operations/runbook.md` (what each
+destructive command destroys, the `skycat.ingestion` structured events, credential rotation),
+`operations/performance.md`, `operations/release.md`, and `decisions/` for choices already settled.
 
 ### Integration tests destroy catalog data
 
