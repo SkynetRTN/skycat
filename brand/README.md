@@ -2,9 +2,9 @@
 
 This directory holds repository brand assets.
 
-- `skycat_logo_name.png` is the primary in-repository logo lockup. Use it in
-  `README.md` and other project-facing documentation when a Skycat logo should
-  appear with the name.
-- `skycat_logo.png` is the GitHub social preview image. Configure it in the
-  repository settings under **Settings -> General -> Social preview**; GitHub
-  does not select the social preview image from a repository file.
+- `skycat_logo.png` is the primary repository logo image. Use it in `README.md`
+  and configure it in the repository settings under
+  **Settings -> General -> Social preview**; GitHub does not select the social
+  preview image from a repository file.
+- `skycat_logo_name.png` is the square logo-plus-wordmark variant. Keep it
+  available for places where the Skycat name needs to be embedded in the image.

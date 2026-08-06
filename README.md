@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="brand/skycat_logo_name.png" alt="Skycat" width="300">
+  <img src="brand/skycat_logo.png" alt="Skycat logo" width="520">
 </p>
 
 # Skycat
