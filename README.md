@@ -1,11 +1,26 @@
+<p align="center">
+  <img src="brand/skycat_logo_name.png" alt="Skycat" width="300">
+</p>
+
 # Skycat
 
-A **standalone** package for building and querying versioned local
-PostgreSQL/PostGIS databases from VizieR/CDS-style astronomical reference
-catalogs. Skycat ships support for APASS DR6, APASS DR10, VSX, Landolt
-(1992 + 2009), and Stetson globular-cluster standards, plus an extension pattern
-for future families such as Pan-STARRS, 2MASS, UCAC5, Tycho-2, SkyMapper, and
-USNO-B1.0.
+Skycat is a **standalone Python package and command-line tool** for turning
+mirrored astronomical reference catalogs into versioned, queryable local
+PostgreSQL/PostGIS databases.
+
+Its purpose is to give calibration, photometry, and observation-processing
+pipelines a reproducible catalog layer: import known catalog releases, validate
+them, activate the release that should serve by default, and query them locally
+without depending on a live external catalog service.
+
+Skycat is intentionally bounded. It owns the catalog database schema,
+migrations, ingestion workflow, query API, and CLI. It does not try to be a
+hosted catalog service, a data mirror, or a replacement for PostgreSQL/PostGIS.
+
+Skycat currently ships support for APASS DR6, APASS DR10, VSX, Landolt
+(1992 + 2009), and Stetson globular-cluster standards, plus an extension
+pattern for future families such as Pan-STARRS, 2MASS, UCAC5, Tycho-2,
+SkyMapper, and USNO-B1.0.
 
 | Family | Releases | Source (CDS) | Parser format | Rows | Provider |
 |--------|----------|--------------|---------------|------|----------|
