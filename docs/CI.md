@@ -137,53 +137,98 @@ gh api "repos/actions/checkout/contents/action.yml?ref=v7" --jq .content \
 Workflows cannot configure this — it is a repository setting, and it is what
 decides whether any of the above actually protects `main`.
 
-Settings → Branches → add a rule for `main`:
-
-- Require a pull request before merging.
-- Require status checks to pass, and require the branch to be up to date.
-  - `required: ci`
-  - `required: workflow safety`
-  - `dependency review`
-- Require review from Code Owners — this is what makes
-  [`.github/CODEOWNERS`](../.github/CODEOWNERS) binding rather than advisory,
-  and it is the setting that enforces the closed maintenance model on a public
-  repository.
-- Require conversation resolution before merging.
-- Restrict who can push to `main`; disable force pushes and branch deletion.
-- Require signed commits if that matches the release policy.
-
-Or with the `gh` CLI:
+Skycat uses **rulesets** (Settings → Rules → Rulesets), not classic branch
+protection. The two are separate systems with separate APIs: this repository has
+no classic protection at all, so
+`gh api repos/SkynetRTN/skycat/branches/main/protection` returns
+`Branch not protected` even though `main` is fully protected. Read the rulesets
+instead:
 
 ```bash
-gh api -X PUT repos/SkynetRTN/skycat/branches/main/protection \
-  --input - <<'JSON'
-{
-  "required_status_checks": {
-    "strict": true,
-    "contexts": ["required: ci", "required: workflow safety", "dependency review"]
-  },
-  "enforce_admins": false,
-  "required_pull_request_reviews": {
-    "required_approving_review_count": 1,
-    "require_code_owner_reviews": true
-  },
-  "restrictions": null,
-  "allow_force_pushes": false,
-  "allow_deletions": false,
-  "required_conversation_resolution": true
-}
-JSON
+gh api repos/SkynetRTN/skycat/rulesets --jq '.[] | "\(.name)\t\(.target)\t\(.enforcement)"'
+gh api repos/SkynetRTN/skycat/rules/branches/main --jq '.[].type'   # what applies to a branch
 ```
+
+Three things are configured, and they are edited in the UI rather than from a
+script — a ruleset is security configuration, and a `PUT` that drops a rule by
+omission is not the failure you want at 2am.
+
+### `Protect Main` — branch ruleset, active, `refs/heads/main`
+
+| Rule | Setting |
+|---|---|
+| `pull_request` | 1 approving review, **require review from Code Owners**, require conversation resolution |
+| `required_status_checks` | strict (branch must be up to date) — the three contexts below |
+| `deletion` | `main` cannot be deleted |
+| `non_fast_forward` | no force pushes |
+
+No bypass actors, so the rules apply to administrators too.
+
+**The required contexts must be the check names GitHub actually reports.** This
+is the one place a typo is silent and total: a required context that never
+reports is not an error, it is a check that stays *Expected* forever, and the PR
+can never merge. The names are:
+
+```
+required: ci
+required: workflow safety
+dependency review
+```
+
+The `required:` prefix is part of the name, not a description of it. Verify
+against a real PR rather than from memory — this listing is the source of truth:
+
+```bash
+gh pr checks <PR> --json name --jq '.[].name' | sort
+```
+
+Requiring the two aggregates rather than their member jobs is deliberate: see
+*Require the aggregates, not the jobs* above. Adding `container scan`,
+`kubernetes manifests`, or any other path-filtered check to this list will
+deadlock merges for the reason given in *Why some jobs are not path-filtered*.
+
+### `Protect release tags` — tag ruleset, active, `refs/tags/v*.*.*`
+
+Blocks `deletion`, `non_fast_forward`, `creation`, and `update`, with a
+repository-role bypass so a maintainer can still cut a release. This is what
+makes a published version immutable: `release.yml` triggers on `v*.*.*` and
+attaches built artifacts to the tag, so a tag that can be moved is a release
+whose contents can be changed after the fact.
+
+### `github-release` environment
+
+`release.yml`'s publish job runs in this environment, which carries a
+**required-reviewer** rule. The draft release is therefore gated on a human
+approving the deployment, not merely on the tag existing. The build job runs
+first and uploads artifacts; the publish job waits for approval and attaches
+those exact files without rebuilding.
+
+### CODEOWNERS
 
 [`.github/CODEOWNERS`](../.github/CODEOWNERS) assigns the CI definition, schema
 migrations, deployment assets, and packaging to the active maintainer
-(`@archon774`, James Atkisson — also recorded in `pyproject.toml`). It has no
-force until "Require review from Code Owners" is enabled above.
+(`@archon774`, James Atkisson — also recorded in `pyproject.toml`). It is
+binding because `Protect Main` sets `require_code_owner_review`; without that,
+it is advisory. This is what enforces the closed maintenance model on a public
+repository.
 
-One item from the planning document is deliberately **not** implemented: the
-**`feature → dev → main` PR-target check.** Whether `main` may take PRs from
+### `dev` is not protected
+
+The rulesets target `refs/heads/main` and `refs/tags/v*.*.*`. A pull request
+into `dev` runs every workflow but **enforces nothing** — it can be merged red.
+That is a reasonable trade for an integration branch, but it means a green
+`dev` PR is evidence, not a gate, and the first PR from `dev` into `main` is
+where the required contexts get tested for real. Check the names before opening
+it.
+
+### Deliberately not implemented
+
+The **`feature → dev → main` PR-target check.** Whether `main` may take PRs from
 branches other than `dev` is a policy call, and an unwritten one — a
-merge-blocking rule invented here would be a guess with teeth.
+merge-blocking rule invented here would be a guess with teeth. Rulesets have no
+native condition for a pull request's *source* branch either, so enforcing it
+would mean a workflow job that inspects `github.head_ref` and fails, which is a
+rule worth writing only once the policy is decided.
 
 ## Running the checks locally
 
