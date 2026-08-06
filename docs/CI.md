@@ -71,6 +71,25 @@ schemas — are path-filtered and therefore stay advisory.
   rather than leaving permanently red checks, and replace the dependency check
   with something visibility-independent (`pip-audit` over `uv export`, or
   Trivy's filesystem scanner).
+
+  **Free is not the same as enabled.** The dependency graph was off for this
+  repository on its first run, and the job failed with "Dependency review is not
+  supported on this repository" — an organisation can disable it even where it
+  costs nothing. It is a one-time toggle under
+  *Settings → Code security and analysis*, and it must be on **before**
+  `dependency review` is added to the required contexts below, or branch
+  protection blocks every merge on a check that cannot pass. Confirm it has data
+  rather than trusting the setting page:
+
+  ```bash
+  gh api repos/SkynetRTN/skycat/dependency-graph/sbom --jq '.sbom.packages | length'
+  ```
+
+  Code scanning has the mirror-image trap: if *default setup* is ever enabled in
+  settings, it conflicts with `codeql.yml` and the advanced workflow fails on
+  SARIF upload. Check with
+  `gh api repos/SkynetRTN/skycat/code-scanning/default-setup --jq .state`;
+  `not-configured` is what this workflow needs.
 - **`secret scan`** uses the gitleaks *image*, not the Action, because the
   Action requires an organisation licence key. Allowlists live in
   [`.gitleaks.toml`](../.gitleaks.toml); every entry there is a claim that the
