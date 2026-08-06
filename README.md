@@ -51,6 +51,11 @@ migrate the catalog database, provide source data under `SKYCAT_DATA_ROOT`,
 import releases, validate them, and activate the release each family should
 serve by default.
 
+## License
+
+Skycat is licensed under the GNU General Public License v3.0. See
+[LICENSE](LICENSE).
+
 ---
 
 ## Why a local catalog database?

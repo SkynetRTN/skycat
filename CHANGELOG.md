@@ -6,4 +6,5 @@ source-controlled summary that release notes should start from.
 ## Unreleased
 
 - Prepared GitHub-hosted package release documentation and metadata.
+- Declared GPLv3 package license metadata.
 - Added CI coverage for package version drift.

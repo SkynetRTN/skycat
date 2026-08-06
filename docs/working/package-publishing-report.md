@@ -35,17 +35,17 @@ The repository already has the core package shape:
   package-build smoke tests, Python-version matrix tests, migration graph
   checks, workflow safety, dependency review, and advisory supply-chain scans.
 
-The main remaining work is now mostly release-policy completion:
+The first GitHub-hosted release dry run is ready from the repository side:
 
-- Add a real license file and license metadata.
-- Enable or confirm the protected `github-release` environment in GitHub
-  repository settings.
-- Run the release workflow from a real `v*.*.*` tag and verify the draft release
-  asset install URL.
-- Decide whether `skycat` is the final public package name and reserve/check it
-  before any later PyPI release.
-- Decide whether GitHub Releases are sufficient for the near term or whether a
-  GitHub Pages simple package index is also worth maintaining.
+- GPLv3 license metadata is declared.
+- The protected `github-release` environment exists with required reviewer
+  approval.
+- Built wheel and sdist artifacts install cleanly and expose packaged
+  migrations.
+- The remaining verification happens after the draft release exists: install
+  from the real GitHub Release wheel asset URL.
+- PyPI name reservation and GitHub Pages indexing remain later distribution
+  decisions, not blockers for the GitHub Release dry run.
 
 Recommended path:
 
@@ -293,23 +293,21 @@ Required actions:
 
 ### 2. License
 
-There is currently no `LICENSE*` file in the repository and no `license` or
-`license-files` metadata in `pyproject.toml`.
+The repository now has a root `LICENSE` file using the GNU General Public
+License version 3, and `pyproject.toml` declares `license = "GPL-3.0-only"` plus
+`license-files = ["LICENSE"]`.
 
-This is still the biggest release-readiness blocker even if artifacts are hosted
-only on GitHub. GitHub can host unlicensed release assets, but users,
-organizations, downstream redistributors, PyPI, and conda-forge need clear
-licensing before they can responsibly consume the package.
+That clears the near-term GitHub-hosted release blocker. For any later package
+index, keep the SPDX expression, classifier, and license file synchronized.
 
 Required actions:
 
-- Choose the project license.
-- Add a root `LICENSE` file.
-- Add license metadata to `pyproject.toml`, preferably an SPDX expression:
+- Keep the root `LICENSE` file.
+- Keep license metadata in `pyproject.toml`:
 
 ```toml
 [project]
-license = "MIT"  # example only; choose deliberately
+license = "GPL-3.0-only"
 license-files = ["LICENSE"]
 ```
 
@@ -318,7 +316,7 @@ license-files = ["LICENSE"]
   fixtures require notices separate from the code license.
 
 Conda-forge specifically expects accurate license metadata and license files, so
-this work is mandatory before conda-forge packaging.
+keep this metadata in place before any conda-forge packaging.
 
 ### 3. Project metadata
 
@@ -337,7 +335,7 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: ...", # match chosen license
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python :: 3",
@@ -909,17 +907,20 @@ wheel/sdist contents, artifact tests, versioning, and release automation.
 
 ## Required work checklist
 
-### Blocking before a GitHub-hosted package release
+### Blocking before a GitHub-hosted package release dry run
 
-- Choose and add a `LICENSE`.
-- Add `license` and `license-files` metadata.
-- Enable or confirm the protected `github-release` environment in GitHub
-  repository settings.
+- No repository-side blockers remain after the GPL metadata and
+  `github-release` environment checks.
+
+### Post-draft verification
+
 - Verify GitHub Release install instructions work from a real release asset URL
   after the first draft release is created.
 
 ### Already implemented in dev
 
+- GPLv3 `LICENSE` file and `pyproject.toml` license metadata.
+- Protected `github-release` environment with required reviewer approval.
 - Complete `[project.urls]`.
 - Non-license classifiers and keywords.
 - Versioning and GitHub Release naming policy in `docs/RELEASE.md`.
@@ -977,7 +978,7 @@ version = "0.1.0"
 description = "Build and query versioned local PostgreSQL/PostGIS databases from astronomical reference catalogs."
 readme = "README.md"
 requires-python = ">=3.11, <3.14"
-license = "..."                    # choose SPDX expression
+license = "GPL-3.0-only"
 license-files = ["LICENSE"]
 authors = [
     { name = "Skycat maintainers" },
@@ -991,6 +992,7 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python :: 3",

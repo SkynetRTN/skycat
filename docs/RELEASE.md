@@ -4,6 +4,9 @@ Skycat's near-term package distribution channel is GitHub Releases. PyPI and
 conda-forge are later channels after the package boundary, license, and release
 process have been exercised with GitHub-hosted artifacts.
 
+Skycat release artifacts are licensed as `GPL-3.0-only`; the root `LICENSE`
+file and `pyproject.toml` license metadata must stay synchronized.
+
 ## Release contract
 
 A GitHub-hosted Skycat package release ships:
