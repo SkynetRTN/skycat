@@ -1,6 +1,6 @@
 # Continuous integration
 
-Seven workflows under [`.github/workflows/`](../.github/workflows). Two of them
+Eight workflows under [`.github/workflows/`](../.github/workflows). Two of them
 end in an aggregate job whose name is the thing branch protection should
 require; the rest are advisory or path-filtered.
 
@@ -13,6 +13,7 @@ require; the rest are advisory or path-filtered.
 | `kubernetes.yml` | `kubernetes manifests` | `infra/kubernetes/**` | advisory |
 | `codeql.yml` | `codeql python` | every PR, weekly | advisory |
 | `secret-scan.yml` | `secret scan` | every PR, push to `main` | advisory |
+| `release.yml` | `build release distributions`, `publish draft GitHub Release` | release tags, manual dispatch | release-only |
 
 ## Require the aggregates, not the jobs
 
@@ -76,6 +77,10 @@ schemas — are path-filtered and therefore stay advisory.
   matched value is safe to be public. Scans both the working tree and full
   history, since a credential that was committed and later deleted is still
   published and still needs rotating.
+- **`release.yml`** is not a PR gate. It runs for `v*.*.*` tags or explicit
+  manual dispatch, verifies the tag matches `pyproject.toml`, builds the wheel
+  and sdist once, smoke-tests both install paths, then attaches those exact
+  artifacts to a draft GitHub Release from the `github-release` environment.
 
 ## Branch protection
 

@@ -19,6 +19,38 @@ Alembic environment, schemas, database roles, and configuration namespace
 (`SKYCAT_DB_*`). It is intended to be used as an independent catalog-ingestion
 and query package, not as an add-on to a larger service.
 
+## Installation from GitHub Releases
+
+Skycat's near-term package distribution channel is GitHub Releases. After a
+release is cut, install the wheel directly from the release assets:
+
+```bash
+python -m pip install \
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.0/skycat-0.1.0-py3-none-any.whl
+```
+
+For a source install from a tag:
+
+```bash
+python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.0"
+```
+
+Replace `v0.1.0` with the release tag you intend to run. The installed package
+provides the `skycat` CLI, Python APIs, parsers, validators, and Alembic
+migrations. See [docs/RELEASE.md](docs/RELEASE.md) for the release process and
+artifact checks.
+
+## Package scope
+
+Installing Skycat installs the control/query software only. It does **not**
+install PostgreSQL, PostGIS, catalog source files, imported catalog rows,
+production roles, storage, backups, credentials, or a hosted query endpoint.
+
+To run a working catalog service, provision PostgreSQL/PostGIS, initialize and
+migrate the catalog database, provide source data under `SKYCAT_DATA_ROOT`,
+import releases, validate them, and activate the release each family should
+serve by default.
+
 ---
 
 ## Why a local catalog database?

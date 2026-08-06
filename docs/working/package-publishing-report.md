@@ -35,19 +35,13 @@ The repository already has the core package shape:
   package-build smoke tests, Python-version matrix tests, migration graph
   checks, workflow safety, dependency review, and advisory supply-chain scans.
 
-The main remaining work is release-hardening:
+The main remaining work is now mostly release-policy completion:
 
 - Add a real license file and license metadata.
-- Add complete package metadata: project URLs, classifiers, keywords,
-  maintainer contact, and supported operating systems.
-- Decide and document versioning across the Python package, database migrations,
-  importer semantics, Docker image tags, and catalog release metadata.
-- Validate that the built wheel and sdist contain all runtime files, especially
-  Alembic migration resources.
-- Keep the existing package-build/install CI in the required aggregate.
-- Add a GitHub Release workflow that builds immutable artifacts once, tests
-  those artifacts, and attaches the exact wheel and sdist to a tagged GitHub
-  Release.
+- Enable or confirm the protected `github-release` environment in GitHub
+  repository settings.
+- Run the release workflow from a real `v*.*.*` tag and verify the draft release
+  asset install URL.
 - Decide whether `skycat` is the final public package name and reserve/check it
   before any later PyPI release.
 - Decide whether GitHub Releases are sufficient for the near term or whether a
@@ -244,9 +238,8 @@ The non-CI workflows add:
 
 This changes the package-readiness assessment materially: the repository now
 does prove that an isolated wheel can be built, installed, invoked, and used to
-locate packaged migrations. The missing near-term piece is not package-build
-validation; it is a release workflow that preserves and publishes those tested
-artifacts through GitHub.
+locate packaged migrations. The release workflow now preserves those tested
+artifacts and publishes them to a draft GitHub Release.
 
 ### Local validation attempted for this report
 
@@ -920,24 +913,22 @@ wheel/sdist contents, artifact tests, versioning, and release automation.
 
 - Choose and add a `LICENSE`.
 - Add `license` and `license-files` metadata.
-- Add complete `[project.urls]`.
-- Add classifiers and keywords.
-- Decide and document versioning policy.
-- Ensure `pyproject.toml` version and `skycat.__version__` cannot drift.
-- Decide release tag format and GitHub Release naming.
-- Build wheel and sdist in a clean environment.
-- Verify clean install from wheel.
-- Verify clean install from sdist.
-- Verify installed CLI works.
-- Verify installed migration machinery can locate packaged migrations.
-- Verify GitHub Release install instructions work from a direct wheel URL.
-- Verify the README does not imply that installing the package creates a
-  complete catalog query service.
-- Add release notes or changelog policy.
-- Decide whether releases start as drafts or publish immediately.
+- Enable or confirm the protected `github-release` environment in GitHub
+  repository settings.
+- Verify GitHub Release install instructions work from a real release asset URL
+  after the first draft release is created.
 
 ### Already implemented in dev
 
+- Complete `[project.urls]`.
+- Non-license classifiers and keywords.
+- Versioning and GitHub Release naming policy in `docs/RELEASE.md`.
+- Version drift test for `pyproject.toml` and `skycat.__version__`.
+- GitHub-hosted installation and package-scope sections in `README.md`.
+- Changelog/release-notes policy through `CHANGELOG.md` and GitHub Releases.
+- Draft-first GitHub Release workflow in `.github/workflows/release.yml`.
+- Security reporting policy in `SECURITY.md`.
+- Contributing guidance in `CONTRIBUTING.md`.
 - Package-build/install CI through `package build`.
 - Python 3.11/3.12/3.13 unit-test matrix.
 - Alembic migration graph validation.
@@ -949,18 +940,10 @@ wheel/sdist contents, artifact tests, versioning, and release automation.
 
 ### Strongly recommended before first GitHub-hosted release
 
-- Add a release workflow that attaches the tested wheel and sdist to GitHub
-  Releases.
-- Add GitHub environment protection for release publishing.
-- Add a short installation section at the top of README.
-- Add a package-scope section explaining that PostgreSQL/PostGIS, source data,
-  imports, and operational deployment are external to the wheel.
-- Add direct GitHub Release wheel install examples.
-- Add `SECURITY.md` with vulnerability-reporting policy.
-- Add `CONTRIBUTING.md` if public contribution is expected.
-- Add `CODE_OF_CONDUCT.md` if using a public community workflow.
 - Add `py.typed` only if public typing support is intended.
 - Decide whether `psycopg[binary]` remains mandatory or moves to an extra.
+- Add `CODE_OF_CONDUCT.md` only if Skycat moves from closed maintenance to a
+  broader public community contribution model.
 
 ### Blocking before later PyPI release
 

@@ -10,6 +10,27 @@ authors = [
 maintainers = [
     { name = "James Atkisson", email = "james@atkisson.net" },
 ]
+keywords = [
+    "astronomy",
+    "catalogs",
+    "photometry",
+    "postgis",
+    "postgresql",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
 dependencies = [
     "sqlalchemy ~= 2.0.38",
     "geoalchemy2 ~= 0.20.0",
@@ -29,6 +50,12 @@ dev = [
 # Single entry point for every catalog operation (init, migrate, discover,
 # register, import, validate, activate, query, crossmatch, health …).
 skycat = "skycat.cli.main:main_entry"
+
+[project.urls]
+Homepage = "https://github.com/SkynetRTN/skycat"
+Repository = "https://github.com/SkynetRTN/skycat"
+Issues = "https://github.com/SkynetRTN/skycat/issues"
+Documentation = "https://github.com/SkynetRTN/skycat#readme"
 
 [tool.uv.sources]
 # skycat has no in-tree path dependencies.
