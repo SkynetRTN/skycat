@@ -66,7 +66,7 @@ universal source table.
 | `stetson` | StetsonGlobs | `catalog_data.stetson_source` | 4.89M | UBVRI globular-cluster standards |
 
 Static family/release definitions live in
-[`registry/catalog_defs.py`](../../../skycat/registry/catalog_defs.py). They
+[`registry/catalog_defs.py`](../../skycat/registry/catalog_defs.py). They
 define source subdirectories, parser keys, data-file globs, auxiliary-file
 globs, and approximate row counts used by validation.
 
@@ -122,7 +122,7 @@ scan and no Python-side spherical filtering for the main query path.
 ## Query API
 
 The low-level query functions live under
-[`skycat/query/`](../../../skycat/query/):
+[`skycat/query/`](../../skycat/query/):
 
 - `cone_search()` returns rows inside a cone, defaulting to nearest-first.
 - `lookup_native_id()` returns rows by catalog-native source identifier.
@@ -130,7 +130,7 @@ The low-level query functions live under
   trip.
 - `cone_search_plan()` returns `EXPLAIN` output for index-plan verification.
 
-`CatalogReader` in [`client.py`](../../../skycat/client.py) is the preferred
+`CatalogReader` in [`client.py`](../../skycat/client.py) is the preferred
 read path for applications. It provides one lazy pooled engine bound to
 `catalog_reader`, a short active-release cache, and a default statement timeout.
 
@@ -171,23 +171,23 @@ Local Docker Compose defines:
 - `skycat-reset`.
 
 Kubernetes manifests under
-[`infra/kubernetes/deploy/base/jobs/`](../../../infra/kubernetes/deploy/base/jobs)
+[`infra/kubernetes/deploy/base/jobs/`](../../infra/kubernetes/deploy/base/jobs)
 are starter one-shot jobs for initialization, migration, and ingestion. They are
 not meant to run on ordinary application startup.
 
 ## Reference map
 
-- [`README.md`](../../../README.md)
-- [`docs/SKYCAT_DATABASE.md`](../../SKYCAT_DATABASE.md)
-- [`pyproject.toml`](../../../pyproject.toml)
-- [`Dockerfile`](../../../Dockerfile)
-- [`skycat/config.py`](../../../skycat/config.py)
-- [`skycat/database/`](../../../skycat/database)
-- [`skycat/models/`](../../../skycat/models)
-- [`skycat/registry/`](../../../skycat/registry)
-- [`skycat/ingestion/`](../../../skycat/ingestion)
-- [`skycat/query/`](../../../skycat/query)
-- [`skycat/client.py`](../../../skycat/client.py)
-- [`skycat/health.py`](../../../skycat/health.py)
-- [`skycat/cli/main.py`](../../../skycat/cli/main.py)
-- [`skycat/migrations/versions/`](../../../skycat/migrations/versions)
+- [`README.md`](../../README.md)
+- [`docs/SKYCAT_DATABASE.md`](../SKYCAT_DATABASE.md)
+- [`pyproject.toml`](../../pyproject.toml)
+- [`Dockerfile`](../../Dockerfile)
+- [`skycat/config.py`](../../skycat/config.py)
+- [`skycat/database/`](../../skycat/database)
+- [`skycat/models/`](../../skycat/models)
+- [`skycat/registry/`](../../skycat/registry)
+- [`skycat/ingestion/`](../../skycat/ingestion)
+- [`skycat/query/`](../../skycat/query)
+- [`skycat/client.py`](../../skycat/client.py)
+- [`skycat/health.py`](../../skycat/health.py)
+- [`skycat/cli/main.py`](../../skycat/cli/main.py)
+- [`skycat/migrations/versions/`](../../skycat/migrations/versions)

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from ..config import CatalogRole, CatalogSettings
 from ..constants import POSTGIS_SPHERE_RADIUS_M, SCHEMA_DATA
 from ..database.base import CatalogBase
-from ..database.engine import create_catalog_engine
+from ..database.engine import create_catalog_engine, driver_connection
 from ..spatial import (
     GEOM_GENERATED_EXPR,
     degrees_to_meters,
@@ -81,7 +81,7 @@ def batch_crossmatch(
                 ) ON COMMIT DROP
                 """
             )
-            driver = conn.connection.driver_connection
+            driver = driver_connection(conn)
             n_inputs = 0
             invalid_ids: list[str] = []
             with driver.cursor() as cur:

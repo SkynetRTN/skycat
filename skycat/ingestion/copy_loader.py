@@ -15,6 +15,8 @@ from psycopg.types.json import Jsonb
 from sqlalchemy import Connection, Table
 from sqlalchemy.dialects.postgresql import dialect as pg_dialect
 
+from ..database.engine import driver_connection
+
 _PG = pg_dialect()
 EXCLUDED_FROM_STAGING = {"release_id", "id", "geom"}
 
@@ -61,7 +63,7 @@ def copy_rows(
     """Stream rows into ``staging_fqn`` via COPY. Returns the loaded count."""
     quoted = ", ".join(f'"{c}"' for c in column_names)
     sql = f"COPY {staging_fqn} ({quoted}) FROM STDIN"
-    driver = conn.connection.driver_connection  # psycopg3 Connection
+    driver = driver_connection(conn)  # psycopg3 Connection
     count = 0
     with driver.cursor() as cur:
         with cur.copy(sql) as cp:
