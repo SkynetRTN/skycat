@@ -253,6 +253,17 @@ Migrations are a linear numeric chain (`0001`…`0006`) with the Alembic version
 table in `catalog_registry`. `skycat/migrations/env.py` resolves the database URL
 from `SKYCAT_DB_*` (admin role) or `-x url=`, never from `alembic.ini`.
 
+Revisions are written by hand — the partitioned parents and their generated
+geography columns are outside what `--autogenerate` can express. Autogenerate is
+kept working for the opposite purpose: `CatalogBase.metadata` must describe the
+migrated schema exactly, so an autogenerate pass against a migrated database
+must come back empty, and `tests/test_schema_drift.py` asserts it does. What
+autogenerate is allowed to reflect is narrowed by
+`skycat/database/autogen.py` to the three catalog schemas and, within
+`catalog_data`, to the partition parents — never the per-release partitions, the
+`_incoming` build tables, the staging schema, or PostGIS's own `tiger`,
+`topology` and `public`, none of which are (or can be) modelled.
+
 ## Deployment
 
 ### Local Docker Compose
