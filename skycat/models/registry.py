@@ -120,7 +120,12 @@ class CatalogRelease(CatalogBase, TimestampMixin):
 
     importer_version: Mapped[str | None] = mapped_column(String(32))
     notes: Mapped[str | None] = mapped_column(Text)
-    failure_detail: Mapped[dict | None] = mapped_column(JSONB)
+    # ``none_as_null`` because the operator query is "which releases have a
+    # recorded failure?". SQLAlchemy's JSON types default to storing Python None
+    # as the JSON scalar ``null``, which is a value: ``failure_detail IS NOT
+    # NULL`` then matched every release ever imported, since a clean import
+    # clears the field. Only a real failure now makes the column non-NULL.
+    failure_detail: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
 
     import_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     import_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

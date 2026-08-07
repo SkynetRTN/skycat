@@ -14,8 +14,18 @@ and the previously active release keeps serving queries until the new one is
 fully READY and explicitly activated.
 
 Staging is committed before the transform so it survives a transform failure for
-diagnosis; registry/ingestion-run rows are written on a separate connection so a
-failure is always recorded (release -> FAILED).
+diagnosis; the failure recorder writes registry/ingestion-run rows on its own
+short-lived engine (see :func:`_record_failure`) so a failure is recorded even
+when the identity that was loading has stopped working.
+
+**The release row describes the partition on disk, not the attempt.** Source
+provenance, row counts and ``production_table`` are written only in the finalize
+block, after the Phase B2 swap has succeeded; the attempt's own provenance lives
+on the per-attempt ``IngestionRun`` row until then. So a ``--replace`` that fails
+before the swap leaves the release exactly as it was — same checksum, same
+counts, same state — which is what makes idempotency honest (the recorded
+checksum is by construction one that was successfully imported) and what keeps a
+SUPERSEDED release rollback-able after a failed attempt to replace it.
 
 Phase boundaries are logged as structured events on the ``skycat.ingestion``
 logger — see :func:`_event` and docs/operations/runbook.md. An import of APASS DR10 runs
@@ -29,14 +39,14 @@ import logging
 import re
 import socket
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dc_replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..config import CatalogRole, CatalogSettings
+from ..config import CatalogDatabaseConfig, CatalogRole, CatalogSettings
 from ..constants import (
     IMPORTER_VERSION,
     INTERNAL_SCHEMA_VERSION,
@@ -69,12 +79,22 @@ from .parsers import ParseStats, get_parser
 
 logger = logging.getLogger("skycat.ingestion")
 
+#: The states that mean "this release has a production partition that was built,
+#: indexed and validated". Idempotency skips a re-import of one of these, and the
+#: failure recorder refuses to mark one FAILED — in both cases because there is
+#: real data behind the row.
+_BUILT_STATES = (
+    CatalogReleaseState.ACTIVE.value,
+    CatalogReleaseState.READY.value,
+    CatalogReleaseState.SUPERSEDED.value,
+)
+
 
 class IngestionError(RuntimeError):
     pass
 
 
-def _event(event: str, **fields) -> None:
+def _event(event: str, *, level: int = logging.INFO, **fields) -> None:
     """Emit one structured ingestion event.
 
     The fields go under a single ``skycat`` key rather than being spread across
@@ -87,7 +107,8 @@ def _event(event: str, **fields) -> None:
     ``record.skycat`` and gets them typed.
     """
     payload = {"event": event, **fields}
-    logger.info(
+    logger.log(
+        level,
         "%s %s",
         event,
         " ".join(f"{k}={v}" for k, v in fields.items()),
@@ -189,6 +210,87 @@ def _replicate_parent_indexes(conn, data_table: str, child: str) -> None:
         conn.execute(text(ddl))
 
 
+def _record_failure(
+    ingest_cfg: CatalogDatabaseConfig,
+    *,
+    family_slug: str,
+    release_name: str,
+    run_id: int | None,
+    error: str,
+    detail: dict,
+) -> str | None:
+    """Record a failed import. Returns the release state left behind, or None.
+
+    Built on its **own** engine rather than the loader's. Same host and role, but
+    a fresh short-lived pool with ``pool_pre_ping`` on and no
+    ``statement_timeout``: every cause that can break the loader — a revoked
+    grant, a password rotated mid-import, a server that went away, a timeout
+    sized for readers — would otherwise break the recorder with it, which is
+    precisely the "separate connection" claim not holding.
+
+    The broad catch stays: recording a failure must never mask the original
+    error, which the caller re-raises. What it must not do is stay quiet about
+    it, so its own exception is logged as ``import.record_failed`` at ERROR.
+    """
+    engine = None
+    try:
+        recorder_cfg = dc_replace(
+            ingest_cfg, statement_timeout_ms=None, pool_pre_ping=True
+        )
+        engine = create_catalog_engine(recorder_cfg, pool_size=1, max_overflow=0)
+        with Session(engine) as meta:
+            release_id = meta.scalar(
+                text(
+                    "SELECT r.id FROM catalog_registry.catalog_release r "
+                    "JOIN catalog_registry.catalog_family f ON f.id = r.family_id "
+                    "WHERE f.slug = :fs AND r.name = :rn"
+                ).bindparams(fs=family_slug, rn=release_name)
+            )
+            # No require_row here: this is the recorder, and a raise would cost
+            # the failure marking *and* the run row.
+            release = (
+                meta.get(CatalogRelease, release_id) if release_id is not None else None
+            )
+            state: str | None = None
+            if release is not None:
+                # A release with a built partition is not FAILED because a later
+                # attempt to replace it failed. Phase B1 builds detached, so that
+                # partition was never touched: an ACTIVE release is still serving
+                # it and a SUPERSEDED one can still be activated for rollback.
+                # Only a release with nothing behind it (REGISTERED, or a
+                # previous FAILED) actually failed.
+                built = bool(release.production_table) and release.state in _BUILT_STATES
+                if not built:
+                    release.state = CatalogReleaseState.FAILED.value
+                release.failure_detail = detail
+                state = release.state
+            if run_id is not None:
+                run = meta.get(IngestionRun, run_id)
+                if run is not None and run.status == IngestionRunStatus.RUNNING.value:
+                    run.status = IngestionRunStatus.FAILED.value
+                    run.finished_at = _now()
+                    run.message = error
+                    # Merge, not replace: the attempted source provenance was
+                    # parked here at the start of the run and is the only record
+                    # of which tree this attempt was reading.
+                    run.detail = {**(run.detail or {}), **detail}
+            meta.commit()
+            return state
+    except Exception as rec_exc:  # noqa: BLE001 -- see the docstring: the original error is re-raised by the caller and must not be masked
+        _event(
+            "import.record_failed",
+            level=logging.ERROR,
+            family=family_slug,
+            release=release_name,
+            run_id=run_id,
+            error=str(rec_exc),
+        )
+        return None
+    finally:
+        if engine is not None:
+            engine.dispose()
+
+
 def import_release(
     settings: CatalogSettings,
     family_slug: str,
@@ -271,15 +373,13 @@ def import_release(
             # Idempotency: skip a completed, unchanged, non-replace re-import.
             # "Completed" = already imported into a production partition, whether
             # it is currently active, merely ready, or superseded by a newer one.
-            _imported_states = (
-                CatalogReleaseState.ACTIVE.value,
-                CatalogReleaseState.READY.value,
-                CatalogReleaseState.SUPERSEDED.value,
-            )
+            # source_checksum is only written after the swap succeeds, so a match
+            # here means *this* tree was successfully imported — not merely that
+            # someone once attempted it.
             if (
                 not replace
                 and release.source_checksum == checksum
-                and release.state in _imported_states
+                and release.state in _BUILT_STATES
                 and release.production_table
             ):
                 report.state = release.state
@@ -306,21 +406,26 @@ def import_release(
                 )
 
             release_id = release.id
-            release.source_location = str(discovered.source_dir)
-            release.source_format = rel_def.source_format
-            release.source_checksum = checksum
-            release.source_size_bytes = discovered.total_bytes
-            release.source_modified_at = discovered.latest_modified()
-            release.expected_row_count = rel_def.approx_row_count
-            # A --replace of the ACTIVE release stays ACTIVE and keeps serving its
-            # old partition right up to the atomic swap in Phase B; only non-active
-            # re-imports / first imports move to STAGING. This never leaves the
-            # family with no active release mid-rebuild.
-            if not was_active:
-                release.state = CatalogReleaseState.STAGING.value
-            release.import_started_at = _now()
-            release.failure_detail = None
-            meta.commit()
+            # Nothing is written to the release row here — not the provenance, not
+            # the state, not even a timestamp. Every column on it describes the
+            # partition currently on disk, and until Phase B2 swaps, that is still
+            # the old one. Writing the new source's checksum up front made the
+            # registry describe a tree that was never imported, and made the next
+            # plain import skip as "already imported"; moving a READY/SUPERSEDED
+            # release to STAGING deleted the documented SUPERSEDED -> ACTIVE
+            # rollback path with no CLI way back. Both are properties of the
+            # *attempt*, so both live on the per-attempt IngestionRun row below,
+            # which is also what `skycat health`'s no_stuck_imports check and the
+            # runbook's in-flight query read.
+            import_started_at = _now()
+            attempted = {
+                "source_location": str(discovered.source_dir),
+                "source_format": rel_def.source_format,
+                "source_checksum": checksum,
+                "source_size_bytes": discovered.total_bytes,
+                "checksum_mode": "content" if content_checksum else "manifest",
+                "expected_row_count": rel_def.approx_row_count,
+            }
 
             run = IngestionRun(
                 release_id=release_id,
@@ -329,6 +434,8 @@ def import_release(
                 importer_version=IMPORTER_VERSION,
                 host=socket.gethostname(),
                 source_path=str(discovered.source_dir),
+                started_at=import_started_at,
+                detail=attempted,
             )
             meta.add(run)
             meta.commit()
@@ -527,6 +634,20 @@ def import_release(
                 meta.get(CatalogRelease, release_id),
                 f"catalog_release id={release_id}",
             )
+            # Provenance lands here, with the row counts and the partition name,
+            # because only now has it been earned: these columns are what
+            # guides/provenance.md proves a release against, and every one of
+            # them now describes the rows that Phase B2 just made live.
+            release.source_location = str(discovered.source_dir)
+            release.source_format = rel_def.source_format
+            release.source_checksum = checksum
+            release.source_size_bytes = discovered.total_bytes
+            release.source_modified_at = discovered.latest_modified()
+            release.expected_row_count = rel_def.approx_row_count
+            # Captured before Phase A, written now: the pair of timestamps can no
+            # longer claim a start later than the completion it belongs to.
+            release.import_started_at = import_started_at
+            release.failure_detail = None
             release.parsed_row_count = stats.parsed
             release.imported_row_count = int(imported)
             release.rejected_row_count = rejected
@@ -558,6 +679,7 @@ def import_release(
             run.rejected_row_count = rejected
             run.finished_at = _now()
             run.detail = {
+                **attempted,
                 "malformed": stats.malformed,
                 "malformed_examples": stats.malformed_examples or [],
             }
@@ -612,36 +734,18 @@ def import_release(
             run_id=run_id,
             error=str(exc),
         )
-        try:
-            with Session(engine) as meta:
-                rel = meta.scalar(
-                    text(
-                        "SELECT id FROM catalog_registry.catalog_release r "
-                        "JOIN catalog_registry.catalog_family f ON f.id = r.family_id "
-                        "WHERE f.slug = :fs AND r.name = :rn"
-                    ).bindparams(fs=family_slug, rn=rel_def.name)
-                )
-                # No require_row here: this is the recorder, and a raise would be
-                # swallowed below, costing the FAILED marking *and* the run row.
-                release = meta.get(CatalogRelease, rel) if rel is not None else None
-                if release is not None:
-                    if release.state != CatalogReleaseState.ACTIVE.value:
-                        release.state = CatalogReleaseState.FAILED.value
-                        release.failure_detail = detail
-                if run_id is not None:
-                    run = meta.get(IngestionRun, run_id)
-                    if (
-                        run is not None
-                        and run.status == IngestionRunStatus.RUNNING.value
-                    ):
-                        run.status = IngestionRunStatus.FAILED.value
-                        run.finished_at = _now()
-                        run.message = str(exc)
-                        run.detail = detail
-                meta.commit()
-        except Exception:  # noqa: S110, BLE001 -- recording the failure must not mask the original error (re-raised below)
-            pass
-        report.state = CatalogReleaseState.FAILED.value
+        recorded_state = _record_failure(
+            ingest_cfg,
+            family_slug=family_slug,
+            release_name=rel_def.name,
+            run_id=run_id,
+            error=str(exc),
+            detail=detail,
+        )
+        # The report is not returned on this path, but it must not claim FAILED
+        # for a release the recorder deliberately left ACTIVE or SUPERSEDED.
+        if recorded_state is not None:
+            report.state = recorded_state
         raise IngestionError(str(exc)) from exc
     finally:
         engine.dispose()
