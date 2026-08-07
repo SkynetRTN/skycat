@@ -586,8 +586,10 @@ Remaining PyPI-facing actions:
 
 - Run `twine check --strict dist/*`; PyPA's guide identifies this as the
   pre-upload check for README rendering problems.
-- Upload to TestPyPI first and visually inspect the rendered project page,
-  including the absolute hosted logo.
+- Upload to TestPyPI first and validate machine-readable metadata, artifact
+  hashes, and clean install behavior from GitHub Actions.
+- Visually inspect the rendered project page manually when a human page review
+  is needed.
 - If repo-relative documentation links break on PyPI, replace the critical
   ones with absolute GitHub URLs or keep PyPI's landing page shorter and direct
   users to GitHub for the full docs.
@@ -707,7 +709,10 @@ Implemented structure on `feature/pypi-release-readiness`:
 - Keep `release-build` as the single build/test source.
 - Keep `github-release` as the draft GitHub Release publisher.
 - Add `testpypi-publish`, gated by a `testpypi` environment.
-- Add `pypi-publish`, gated by a stricter `pypi` environment.
+- Add `testpypi-validation` for Simple API, JSON metadata, artifact hashes,
+  README metadata source, install, CLI, and packaged-migration checks.
+- Add `pypi-publish`, gated by a stricter `pypi` environment after the draft
+  GitHub Release and TestPyPI validation have succeeded.
 - Give PyPI jobs `id-token: write` at the job level only.
 - Do not give the build or GitHub Release job OIDC publishing permission.
 - Use TestPyPI before real PyPI for the first upload.
@@ -737,8 +742,11 @@ jobs:
 ```
 
 The real PyPI job is the same shape without `repository-url`, using the `pypi`
-environment and the PyPI trusted publisher configuration for
-`SkynetRTN/skycat`, `.github/workflows/release.yml`, and environment `pypi`.
+environment and the PyPI trusted publisher configuration for `SkynetRTN/skycat`,
+`.github/workflows/release.yml`, and environment `pypi`. On a tag-push release,
+that job is queued automatically after the draft GitHub Release and TestPyPI
+validation jobs succeed; the protected environment approval remains the manual
+gate before the real PyPI upload.
 
 ## GitHub hosting options
 
@@ -802,9 +810,13 @@ not as a replacement. The artifact sequence should be:
 1. Build and test once in `release-build`.
 2. Publish a draft GitHub Release from the tested artifacts.
 3. Upload the same artifacts to TestPyPI.
-4. Install from TestPyPI in a clean environment.
-5. Upload the same artifacts to PyPI.
-6. Install from PyPI in a clean environment.
+4. Validate TestPyPI's Simple API, JSON metadata, uploaded artifact hashes,
+   README metadata source, exact TestPyPI wheel install, CLI entry point, and
+   packaged migrations.
+5. Queue the real PyPI upload behind the protected `pypi` environment.
+6. Approve the `pypi` deployment when ready.
+7. Upload the same artifacts to PyPI.
+8. Install from PyPI in a clean environment.
 
 Example TestPyPI install check:
 
@@ -972,8 +984,9 @@ wheel/sdist contents, artifact tests, versioning, and release automation.
 - `twine >= 6.0` is part of the `dev` extra and lockfile.
 - CI package-build runs `twine check --strict dist/*`.
 - Release build runs `twine check --strict dist/*`.
-- `release.yml` has manual-dispatch `testpypi-publish` and `pypi-publish`
-  jobs that download `release-dists` and do not rebuild artifacts.
+- `release.yml` publishes to TestPyPI automatically on release tags, validates
+  TestPyPI through machine-readable APIs and install checks, and queues the
+  real PyPI upload behind the protected `pypi` environment.
 - Only the PyPI/TestPyPI jobs receive job-level `id-token: write`.
 - Release and CI docs explain the required Trusted Publisher and GitHub
   environment setup.
