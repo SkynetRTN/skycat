@@ -31,6 +31,8 @@ leftover staging tables) on teardown.
 from __future__ import annotations
 
 import logging
+import queue
+import threading
 from pathlib import Path
 
 import pytest
@@ -327,6 +329,73 @@ def test_every_failure_is_recorded_on_the_ingestion_run(catalog, bad_source):
         assert run["finished_at"] is not None
         assert "Production validation failed" in (run["message"] or "")
         assert "traceback" in (run["detail"] or {})
+
+
+@pytest.mark.postgis
+def test_phase_b2_lock_timeout_fails_without_demoting_active_release(catalog, caplog):
+    """F7: a queued swap must time out instead of wedging the family parent.
+
+    The reader transaction holds ACCESS SHARE on the partition parent. Phase B2
+    asks for ACCESS EXCLUSIVE, waits only for the configured lock timeout, rolls
+    back, retries a bounded number of times, then fails with the old partition
+    still attached and queryable.
+    """
+    import dataclasses
+
+    from skycat.query import cone_search
+
+    settings = dataclasses.replace(
+        catalog,
+        base=dataclasses.replace(catalog.base, lock_timeout_ms=100),
+    )
+    before = _release_row(settings, "apass", "DR10")
+    assert before["state"] == "active"
+
+    result: queue.Queue[BaseException | None] = queue.Queue(maxsize=1)
+    reader = _reader_engine(settings)
+    try:
+        with reader.connect() as conn:
+            txn = conn.begin()
+            try:
+                count = conn.execute(
+                    text("SELECT count(*) FROM catalog_data.apass_source")
+                ).scalar_one()
+                assert count
+
+                def run_import() -> None:
+                    try:
+                        import_release(settings, "apass", "dr10", replace=True, force=True)
+                    except BaseException as exc:  # noqa: BLE001 -- test thread needs it
+                        result.put(exc)
+                    else:
+                        result.put(None)
+
+                with caplog.at_level(logging.WARNING, logger="skycat.ingestion"):
+                    thread = threading.Thread(target=run_import, daemon=True)
+                    thread.start()
+                    exc = result.get(timeout=10)
+                    thread.join(timeout=1)
+                assert not thread.is_alive()
+            finally:
+                txn.rollback()
+    finally:
+        reader.dispose()
+
+    assert isinstance(exc, IngestionError)
+    assert "lock timeout" in str(exc).lower()
+    lock_events = [
+        rec for rec in caplog.records
+        if getattr(rec, "skycat", {}).get("event") == "phase_b2.lock_wait"
+    ]
+    assert len(lock_events) == 3
+    assert [rec.skycat["retry"] for rec in lock_events] == [True, True, False]
+    assert {rec.skycat["lock_timeout_ms"] for rec in lock_events} == {100}
+
+    after = _release_row(settings, "apass", "DR10")
+    assert after["state"] == "active"
+    assert after["source_checksum"] == before["source_checksum"]
+    assert after["production_table"] == before["production_table"]
+    assert cone_search(settings, "apass", 100.0039, 4.861469, radius_deg=0.5)
 
 
 # ------------------------------------------------------- F9, without a database

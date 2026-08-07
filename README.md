@@ -193,7 +193,9 @@ runtime paths and diagnostics.
 | `SKYCAT_DB_POOL_RECYCLE` / `SKYCAT_DB_POOL_TIMEOUT` | `300` / `30` | Pool recycle and checkout timing. |
 | `SKYCAT_DB_POOL_PRE_PING` | `true` | Detect stale pooled connections. |
 | `SKYCAT_DB_ECHO` | `false` | SQL echo logging. |
-| `SKYCAT_DB_STATEMENT_TIMEOUT` | unset | Per-connection statement timeout in milliseconds. |
+| `SKYCAT_DB_STATEMENT_TIMEOUT` | unset | Reader/default statement timeout in milliseconds. Does not apply to ingest, admin, or bootstrap connections. |
+| `SKYCAT_DB_{BOOTSTRAP,ADMIN,INGEST,READER}_STATEMENT_TIMEOUT` | unset | Role-specific statement timeout override in milliseconds. |
+| `SKYCAT_DB_LOCK_TIMEOUT` | `5000` | Phase B2 import swap lock timeout in milliseconds; each retry waits at most this long for the family parent. |
 | `SKYCAT_DB_BOOTSTRAP_USER` / `SKYCAT_DB_BOOTSTRAP_PASSWORD` | unset | DBA/bootstrap identity for `init`. |
 | `SKYCAT_DB_ADMIN_USER` / `SKYCAT_DB_ADMIN_PASSWORD` | unset | Owner/migrator identity. |
 | `SKYCAT_DB_INGEST_USER` / `SKYCAT_DB_INGEST_PASSWORD` | unset | Bulk-ingestion identity. |
