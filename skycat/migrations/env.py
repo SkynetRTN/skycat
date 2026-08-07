@@ -7,6 +7,9 @@
 * The Alembic version table lives in the ``catalog_registry`` schema; the three
   catalog schemas are ensured to exist before migrations run so a fresh database
   bootstraps cleanly.
+* Autogenerate sees only the three catalog schemas, and within ``catalog_data``
+  only the partition parents — see ``skycat/database/autogen.py`` for why, and
+  ``tests/test_schema_drift.py`` for the test that keeps it true.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from sqlalchemy import create_engine, text
 
 from skycat.config import CatalogDatabaseConfig, load_settings
 from skycat.constants import ALL_SCHEMAS, CatalogRole
+from skycat.database.autogen import autogenerate_options
 from skycat.database.base import CatalogBase
 from skycat.constants import SCHEMA_REGISTRY
 
@@ -66,7 +70,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         version_table_schema=SCHEMA_REGISTRY,
-        include_schemas=True,
+        **autogenerate_options(),
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -82,7 +86,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             version_table_schema=SCHEMA_REGISTRY,
-            include_schemas=True,
+            **autogenerate_options(),
         )
         with context.begin_transaction():
             context.run_migrations()

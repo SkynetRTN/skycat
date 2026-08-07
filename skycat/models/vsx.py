@@ -11,7 +11,7 @@ Release-partitioned like APASS (``LIST (release_id)``).
 
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Double, Integer, Sequence, SmallInteger, String
+from sqlalchemy import BigInteger, Double, Index, Integer, Sequence, SmallInteger, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,10 +26,17 @@ class VsxSource(CatalogBase):
     """A single VSX variable-star record (release-partitioned)."""
 
     __tablename__ = "vsx_source"
-    __table_args__ = {
-        "schema": SCHEMA_DATA,
-        "postgresql_partition_by": "LIST (release_id)",
-    }
+    # Declared, not created, from here — see the note in ``models/apass.py``.
+    # Names must match ``migrations/versions/0003_vsx.py``.
+    __table_args__ = (
+        Index("ix_vsx_source_geom", "geom", postgresql_using="gist"),
+        Index("ix_vsx_source_native_id", "native_id"),
+        Index("ix_vsx_source_vsx_oid", "vsx_oid"),
+        {
+            "schema": SCHEMA_DATA,
+            "postgresql_partition_by": "LIST (release_id)",
+        },
+    )
 
     release_id: Mapped[int] = mapped_column(Integer, primary_key=True, nullable=False)
     id: Mapped[int] = mapped_column(
