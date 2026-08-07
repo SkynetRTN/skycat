@@ -1,12 +1,12 @@
 ---
 status: open
 reviewed: 2026-08-07
-branch: docs/remote-catalog-reader
+branch: docs/catalog-coverage-split
 authority: code-inspection (skycat @ 570883e, skynet @ 0040c28ab, afterglow-core @ 92aaf61) + upstream docs
 implementation: not-started
 ---
 
-# Catalog coverage — local families first, then an adjacent `RemoteCatalogReader`
+# Remote catalogs — an adjacent `RemoteCatalogReader`
 
 Skycat exists because astroquery could not go local. The 2026-07-04 investigation
 that seeded this package established that `astroquery.vizier.Vizier` only POSTs to
@@ -43,16 +43,19 @@ attribution**, because there is none to give. The default install stays at five
 dependencies and `import skycat` never imports astroquery.
 
 **And it is built second.** Remote access is worth having for the catalogs that
-genuinely cannot be mirrored — and until Skycat knows which those are, "cannot
-be mirrored" is an assumption, not a measurement. Four of the six catalogs the
-legacy plugin layer serves remotely fit comfortably on a disk Skycat already
-has; one of them, Tycho-2, is under a gigabyte and its local implementation is already
-written out as the worked example in
-[guides/add-family.md](../guides/add-family.md). Section 6 sizes every
-candidate, section 7 puts the local work first, and the remote phases are
-deliberately gated on it: **`RemoteCatalogReader` should ship covering the
-catalogs local storage cannot justify, not the catalogs nobody has tried to
-store yet.**
+genuinely cannot be mirrored, and which those are is a measurement, not an
+assumption. [local-catalogs.md](local-catalogs.md) takes it against a 4 TB
+budget and reaches a sharp boundary: everything except the billion-row full
+surveys fits, with room to spare, so the remote catalog set is **five
+catalogs** — full PanSTARRS DR2, full Gaia DR3, NOMAD, USNO-B1.0 and SDSS —
+totalling roughly 3.1 TB, more than the entire disk. That is the honest
+justification for building this at all, and the remote phases are gated on it:
+**`RemoteCatalogReader` should ship covering the catalogs local storage cannot
+justify, not the catalogs nobody has tried to store yet.**
+
+The companion note owns everything about mirroring: sizing, download sources per
+catalog, the six touch points, ingestion at 10⁸–10⁹ rows, and the L-phase plan.
+This note owns the reader.
 
 ---
 
@@ -91,7 +94,7 @@ This is why the plan does **not** supersede decision 0001 and does not need to.
 0001 is about the query path having one implementation. It still does. A second
 class with a different name, a different exception type, a different dependency
 set and no release vocabulary is not a fallback — it is a different question
-being asked deliberately. Phase R0 (§7) writes that argument down as decision
+being asked deliberately. Phase R0 (§6) writes that argument down as decision
 0002 so it is settled rather than re-derived.
 
 ### 1.3 Explicitly out of scope
@@ -412,7 +415,7 @@ says it plainly: the validation error was one "which `_filter_variable_stars`
 swallows, silently disabling variable-star filtering". A whole safety feature was
 off, with no failure visible anywhere. Skycat's row shape is a third schema again
 (§5.4); the same class of silent failure is the default outcome, not the unlucky
-one, and §8 is the answer.
+one, and §7 is the answer.
 
 **Constraints go over the wire as strings.** `query_region` splits its
 `constraints` dict into `column_filters` (entries with a value) and `keywords`
@@ -825,7 +828,7 @@ Four properties that follow from the shape:
 3. **`mirrors_*` and `comparable` put §5.2 in the data.** `apass` gets
    `mirrors_family="apass", mirrors_release="DR9", comparable="no",
    comparable_note="VizieR serves DR9; Skycat serves DR6 and DR10. No overlap."`
-   The parity harness reads the same table (§8), so an untestable case is
+   The parity harness reads the same table (§7), so an untestable case is
    documented rather than quietly omitted.
 4. **pyright can see all of it**, which `type(classname, (VizierCatalog,), kw)`
    made impossible.
@@ -1119,7 +1122,7 @@ those tables stay downstream (§1.3.4).
 ### 5.8 Non-hermetic tests — **handled by two markers**
 
 Network tests fail when CDS is slow, are the first thing disabled when CI gets
-flaky, and once disabled stop catching anything. §8 is the answer: recorded
+flaky, and once disabled stop catching anything. §7 is the answer: recorded
 VOTable/TAP fixtures for the deterministic assertions, plus a separately-marked
 live test run on demand — mirroring how `postgis` already works, including the
 `--require-postgis` escalation that turns silent skipping into a hard failure.
@@ -1135,311 +1138,35 @@ setting, never a routing decision (§4.12), and the README's configuration table
 gains a sentence saying which `SKYCAT_*` variables Skycat reads and which belong
 to the pipeline.
 
----
+## 6. Action plan
 
-## 6. Local coverage first — what to mirror, and what it costs
-
-Remote access earns its keep on catalogs that cannot be stored. Which catalogs
-those are is a measurement nobody has taken. This section takes it, at least to
-the accuracy the schema allows, and the conclusion reorders the plan: **four of
-the six catalogs the legacy plugin layer serves remotely are mirrorable on
-hardware Skycat already has, and one of them costs less than a gigabyte.**
-
-### 6.1 Why the ordering matters
-
-Three reasons, in increasing order of force.
-
-1. **A mirrored catalog is strictly better than a remote one** on every axis
-   Skycat cares about — reproducibility, release attribution, latency,
-   `batch_crossmatch`, availability, and the failure mode being "cannot connect"
-   rather than "returned nothing". Remote access is not a feature; it is what you
-   do when the good option is unaffordable.
-2. **Building remote support first biases the estimate.** Once
-   `RemoteCatalogReader.cone("panstarrs", …)` works, the pressure to size,
-   mirror and validate a PanSTARRS release drops to zero, and the catalog is
-   remote forever by default rather than by decision.
-3. **The local work sharpens the remote work.** Every family mirrored is another
-   `comparable="yes"` row for the parity harness (§4.4) — Tycho-2 mirrored
-   locally means the remote Tycho-2 mapping gets an independent source of truth
-   it would not otherwise have. Local coverage does not compete with R1; it feeds
-   it.
-
-The counter-argument, stated fairly: local families are expensive
-(six touch points, a migration, a multi-hour ingest, disk) and remote catalogs
-are cheap (a dozen lines of declaration). That is true, and it is exactly why the
-cheap option must not be built first — it will absorb work that belongs to the
-expensive one.
-
-### 6.2 What a row costs
-
-Derived from the shipped schema, not measured. `ApassSource`
-(`skycat/models/apass.py`) is the wide case: 28 attributes, sixteen `Double`
-magnitude/error columns, a `JSONB extra`, and the generated
-`geography(Point,4326)`. The `add-family` guide's Tycho-2 example is the narrow
-case. Catalog tables do **not** carry `TimestampMixin`, so there is no
-per-row `created_at`/`updated_at`.
-
-| Component | Wide (APASS-shaped) | Narrow (Tycho-2-shaped) |
-|---|---|---|
-| Tuple header + null bitmap, MAXALIGNed | 32 | 32 |
-| `release_id` int4 + `id` int8, with padding | 16 | 16 |
-| `native_id` varchar | 10 | 14 |
-| Coordinates + errors, 4 × float8 | 32 | 32 |
-| Photometry, 2 × *n* bands × float8 | 128 (8 bands) | 32 (2 bands) |
-| Other typed columns (counts, proper motions, flags) | 8 | 24 |
-| `geom` geography(Point,4326), MAXALIGNed | 32 | 32 |
-| `extra` JSONB | ~150 | 0 (NULL) |
-| Item pointer + page slack (~8 %) | ~45 | ~15 |
-| **Heap subtotal** | **~455 B** | **~200 B** |
-| `PRIMARY KEY (release_id, id)` btree | ~28 | ~28 |
-| `native_id` btree | ~36 | ~40 |
-| GiST on `geom` | ~55 | ~55 |
-| **Index subtotal** | **~120 B** | **~125 B** |
-| **Total** | **≈ 575 B/row** | **≈ 325 B/row** |
-
-Planning constants: **600 B/row wide, 350 B/row narrow.** These are ±30 % until
-phase L0 calibrates them against the real DR10 partition with `skycat sizes` —
-`extra` size and `native_id` length are the two terms that move most, and both
-are per-catalog. Treat every GB figure below as an order-of-magnitude sort key,
-not a procurement number.
-
-### 6.3 Peak disk is not steady-state disk
-
-This falls straight out of the ingestion design and is the easiest planning
-mistake to make. Phase B1 builds a **detached standalone table** — a full second
-copy of the release, with its own PK and replicated indexes — while the old
-partition keeps serving reads, and only then does B2 swap them. Phase A has
-already streamed the rows through unlogged staging. So during a `--replace` of
-the largest release, the database holds the old partition, the new standalone
-table, and the staging copy simultaneously:
-
-> **Budget ≈ steady state + 2 × the largest single release.**
-
-For a store dominated by APASS DR10 that is roughly a 2.2× multiplier. This is a
-property worth preserving, not engineering away: it is what lets a `--replace` of
-the ACTIVE release stay ACTIVE throughout.
-
-### 6.4 What is stored today
-
-| Family | Release | Rows | Shape | Est. |
-|---|---|---|---|---|
-| `apass` | DR6 | 42.6 M | wide (u/z/Y NULL) | ~23 GB |
-| `apass` | **DR10** | 128.6 M | wide | **~77 GB** |
-| `vsx` | current | 10.3 M | mid | ~5 GB |
-| `stetson` | stetsonglobs | 4.9 M | mid | ~2 GB |
-| `landolt` | 1992 + 2009 | 1.1 k | narrow | <1 MB |
-| | | | **steady state** | **≈ 107 GB** |
-| | | | **peak during a DR10 replace** | **≈ 240 GB** |
-
-For reference, the development host this note was written on has 220 GB free.
-The production budget is open item 9.
-
-### 6.5 Candidates, sized
-
-Row counts as published by VizieR; verify in L0 (`Vizier.get_catalog_metadata()`
-is free and needs no download — the same call §4.11 uses for the designation
-lint).
-
-| Catalog | VizieR | Rows | Shape | Est. steady | Verdict |
-|---|---|---|---|---|---|
-| **Tycho-2** | `I/259/tyc2` | 2.5 M | narrow | **0.9 GB** | **A — mirror now** |
-| **Gaia DR3 synthetic photometry** | `I/360/syntphot` | ~220 M (~102 M standardised) | wide | **~130 GB** full, ~60 GB standardised | **B — mirror** |
-| **2MASS PSC** | `II/246` | 471 M | mid | **~190 GB** (J<16 cut: far less) | **B — mirror** |
-| SkyMapper DR2 | `II/358/smss` | 285 M | wide | ~170 GB | C — hemisphere-gated |
-| PanSTARRS DR2 | `II/349` | 1.92 B | wide | ~1.15 TB full | C — only magnitude-limited |
-| UCAC5 | `I/340` | 108 M | mid | ~45 GB | unranked — Gaia supersedes it |
-| ATLAS RefCat2 | `J/ApJ/867/105` | 991 M | mid | ~400 GB | C — evaluate against PanSTARRS |
-| USNO-B1.0 | `I/284` | 1.05 B | mid | ~420 GB | **D — remote only** |
-| NOMAD | `I/297` | 1.12 B | mid | ~450 GB | **D — remote only** |
-| Gaia DR3 main | `I/355/gaiadr3` | 1.81 B | wide | ~1.1 TB | **D — remote only** |
-| SDSS DR17 | — (SQL) | ~1.2 B | — | — | **D — not a VizieR mirror** |
-
-Storing everything is roughly 4 TB, which settles that question. The tiers:
-
-**Tier A — mirror unconditionally (≈ 1 GB).** **Tycho-2.** APASS saturates around
-V ≈ 10; Tycho-2 covers V < 11.5, so it fills the *bright*-star gap the current
-store simply does not answer. It costs 0.9 GB, it has two bands and no
-transformation expressions, and its local implementation is already written out
-end to end as the worked example in
-[guides/add-family.md](../guides/add-family.md) — six sections, real code, real
-`native_id` discussion. There is no defensible reason to serve this one over
-HTTP.
-
-**Tier B — mirror, highest value (≈ 60–200 GB each).**
-
-- **Gaia DR3 synthetic photometry (GSPC).** The strongest single addition in this
-  document, and it is absent from the entire legacy provider list (§2.2) purely
-  because it postdates it. Standardised synthetic UBVRI and ugriz magnitudes
-  derived from BP/RP spectra, all-sky and homogeneous — which is a *better*
-  answer than the photometric transformation tables in §2.2, not a cheaper one.
-  A pipeline calibrating in Johnson V against measured synthetic V does not need
-  Lupton or Jester coefficients at all.
-- **2MASS PSC.** The only all-sky JHK source, and what the legacy `(J-K)` cubics
-  consume. Mirroring it moves that input from a remote dependency to a local one.
-
-**Tier C — mirror magnitude-limited, hemisphere-driven (≈ 150–350 GB).**
-PanSTARRS DR2 for the north, SkyMapper for the south. Skynet operates telescopes
-in both hemispheres, so which of these is needed is a real question with a real
-answer that this note does not have (open item 10). Full PanSTARRS at ~1.15 TB is
-the clearest case in the document for remote-only if the cut cannot be justified.
-
-**Tier D — do not mirror. This is what `RemoteCatalogReader` is for.**
-USNO-B1.0 is 420 GB of photographic-plate photometry with scatter the pipeline
-should prefer to avoid. NOMAD is a *compilation* of Tycho-2, UCAC, USNO-B and
-2MASS — mirror the components, never the merge. Full Gaia DR3 and full PanSTARRS
-are order-1 TB each. SDSS is a SQL-region service with a survey footprint, not a
-bulk VizieR mirror.
-
-**Unranked: UCAC5** (45 GB). Gaia DR3 supersedes it for astrometry and GSPC for
-photometry. Skip unless a consumer names it.
-
-### 6.6 Magnitude cuts, and the honesty they require
-
-A magnitude-limited release is the single largest storage lever — it is what
-makes PanSTARRS conceivable at all — and it sits awkwardly against a stated
-principle: *releases are a deployment mechanism, not a science dimension.* A cut
-is unambiguously a science dimension. The tension is resolvable, but only
-explicitly:
-
-1. **The cut goes in the release name.** `dr2-r19`, never `dr2`. `ResolvedRelease`
-   already carries `release_name` into every resolution, so the cut then travels
-   with every answer at no additional cost.
-2. **The cut is a validated predicate, not a comment.** The family's validation
-   module asserts that no imported row violates it, so a release named `-r19`
-   that contains an r = 21 source fails validation rather than quietly
-   misrepresenting itself.
-3. **`skycat families` and `--json` surface it**, and the README's family table
-   states it.
-4. **A magnitude-limited family is never described as "the catalog."** A user
-   who cones at r = 20 and gets nothing must be able to discover why from the
-   data, not from a wiki page. This is the same requirement as `_source: "remote"`
-   in §4.3, for the same reason.
-
-Whether that needs its own decision record alongside 0002 is a judgement call;
-it changes what a release means, so probably yes.
-
-The cut factors themselves must be **counted, not assumed**. VizieR will return
-the matched row count for a `column_filter` without transferring any data, which
-makes "how many PanSTARRS objects have r < 19 and ≥ 2 detections" a free
-question. Answering it for every Tier B/C candidate is the substance of L0.
-
-### 6.7 What this changes about the remote plan
-
-- **Tycho-2 is no longer the first remote catalog.** It was chosen (§7.R3) as the
-  cleanest candidate precisely because it is small and simple — which is also why
-  it should be mirrored. After L1 it becomes a *parity* target instead.
-- **The remote catalog set becomes Tier D**, which is a better-defined and more
-  defensible surface than "the six the legacy layer happened to implement": these
-  are the catalogs local storage genuinely cannot justify, with the sizing to
-  prove it.
-- **R1's parity coverage grows** with each mirrored family, which is the
-  strongest technical reason the two tracks are complementary rather than
-  sequential-by-necessity.
-- **Nothing about §4's design changes.** The reader, the row shape, the failure
-  taxonomy and the config namespace are all unaffected by which catalogs end up
-  on which side of the line.
-
----
-
-## 7. Action plan
-
-Two tracks. The local track (**L**) comes first and delivers coverage; the remote
-track (**R**) follows and delivers reach. Each phase is independently valuable
-and independently abandonable, and each names what it touches, what must be true
-before it is done, and the condition under which it should stop rather than
-continue.
+Six phases, all remote. The local track they follow is
+[local-catalogs.md](local-catalogs.md) §5 (L0–L5). Each phase here is
+independently valuable and independently abandonable, and each names what it
+touches, what must be true before it is done, and the condition under which it
+should stop rather than continue.
 
 ```
-L0 measure ─▶ L1 Tycho-2 ─▶ L2 Gaia GSPC ─▶ L3 2MASS ─▶ L4 deep optical (hemisphere-gated)
-   │                │                                          │
-   │  shares the dev-extra astroquery dep      each adds a parity pair for R1
-   ▼                ▼                                          ▼
+        local track ─── L0 measure ─▶ L1 Tycho-2 ─▶ L2 RefCat2 ─▶ L3 GSPC ─▶ L4 2MASS
+                            │              │
+   (shares the dev-extra astroquery dep)   └── each mirrored family adds an R1 parity pair
+                            ▼              ▼
 R0 decision ──┐
               ├─▶ R2 reader + resolve() ─▶ R3 first cone (Tier D) ─┬─▶ R4 more Tier D
 R1 mapping + parity (dev) ──┘                                      └─▶ R5 lint + migration
 ```
 
-R0–R2 do not depend on the local track and can run in parallel with it if there
-is capacity; **R3 onward should not start until L1 has landed**, because the
-Tier D boundary is what makes the remote catalog set defensible.
+**R0–R2 do not depend on the local track** and can run in parallel with it: the
+decision record, the mapping layer, the parity harness and SIMBAD name resolution
+are all useful whatever gets mirrored, and R1 shares L0's dev-extra astroquery
+dependency rather than adding one. **R3 onward should wait for L1**, because the
+Tier D boundary is what makes the remote catalog set defensible, and because
+mirroring Tycho-2 removes it from the remote candidate list.
 
-### L0 — Measure and budget (1–2 days)
-
-**Scope.** Turn §6's estimates into numbers. Run `skycat sizes` against the real
-store to calibrate the bytes-per-row constants (§6.2) — heap, index and `extra`
-sizes for the DR10 partition specifically. Establish the actual disk budget on
-the target host, and whether it is shared. Count magnitude-limited subsets for
-every Tier B/C candidate via VizieR metadata queries — free, no download, and it
-uses the same `dev`-extra astroquery that R1 needs, so the two phases share a
-dependency rather than each justifying one. Confirm hemisphere requirements with
-the pipeline owners (open item 10).
-
-**Files.** None in `skycat/`. A results table appended to this note and to
-[operations/performance.md](../operations/performance.md).
-
-**Acceptance.** A measured B/row figure for APASS DR10; a stated disk budget with
-the §6.3 peak multiplier applied; a row count for every candidate at its proposed
-cut. §6.5's tiers stop being estimates and become decisions.
-
-**Stop here if** the budget is under ~50 GB free after the peak multiplier. Then
-Tier A is the entire local plan, and the remote track moves up.
-
-### L1 — Tycho-2 (3–5 days)
-
-The cheapest real capability gain in this document: 0.9 GB buys the bright-star
-range (V < 11.5) that APASS cannot serve at all. The implementation is already
-written out as the worked example in
-[guides/add-family.md](../guides/add-family.md), which covers all six touch
-points against exactly this family — including the `native_id` decision
-(`TYC1-TYC2-TYC3`, e.g. `1-13-1`) and why Tycho-2 is a new family rather than a
-release.
-
-**Files.** `skycat/registry/catalog_defs.py`, `skycat/models/tycho2.py`,
-`skycat/ingestion/parsers/tycho2.py`, `skycat/migrations/versions/0007_tycho2.py`,
-`skycat/validation/tycho2.py`, `tests/` fixtures, README family table.
-
-**Acceptance.** `skycat import tycho2 …` end to end against a throwaway PostGIS;
-`uv run pytest tests -q --require-postgis` green; a documented cone at V ≈ 8 that
-returns Tycho-2 rows where `apass` returns none. Measured on-disk size compared
-against §6.2's narrow constant, and the constant corrected in this note.
-
-**Note.** This removes Tycho-2 as R3's candidate (§6.7).
-
-### L2 — Gaia DR3 synthetic photometry (1–2 weeks)
-
-The strongest single addition (§6.5, Tier B), and the first family large enough
-that ingestion performance is a real consideration rather than a formality — a
-good stress test of the detached-rebuild path at ~10⁸ rows, and the first
-validation of L0's storage model at scale.
-
-**The design decision this phase carries:** GSPC publishes synthetic magnitudes
-in many bands. Store the ones the pipeline resolves filters to as typed columns;
-put the rest in `extra`. Resist a column per band "for completeness" — at 10⁸
-rows every unused `Double` is ~800 MB (§6.2).
-
-**Acceptance.** Ingest and activate against a throwaway; `--require-postgis`
-green; timings recorded in `performance.md`; a cone returning synthetic Johnson V
-where the pipeline currently applies a Lupton transformation, with the two
-compared.
-
-### L3 — 2MASS PSC (1–2 weeks)
-
-The only all-sky JHK source, and the input the legacy `(J-K)` cubics consume
-(§2.2). Mirroring it converts that from a remote dependency into a local one.
-Apply a `J` cut if L0 shows the full 471 M rows do not fit the budget; if so,
-§6.6's naming and validation rules apply.
-
-### L4 — Deep optical, hemisphere-driven (2–4 weeks each)
-
-PanSTARRS DR2 magnitude-limited (north) and/or SkyMapper (south), gated on L0's
-hemisphere answer. Each is the largest ingestion Skycat will have attempted. Do
-them one at a time, re-measure after each, and apply §6.6 in full — a
-magnitude-limited PanSTARRS release that does not announce its cut is a
-misrepresentation, not a compromise.
-
-**Stop here if** L0's budget cannot absorb one of them with the §6.3 peak
-multiplier applied. That is not a failure; it is the measurement that moves the
-catalog into Tier D and hands it to the remote track with evidence.
+If capacity is limited, the highest-value ordering across both notes is
+**L1 → R0 → R1 → L0 → L2 → R2**: the cheapest local win, then the decision that
+settles the architecture, then the harness that catches silent mapping errors,
+then the measurements the large ingests depend on.
 
 ### R0 — Decide and record (0.5–1 day)
 
@@ -1449,7 +1176,7 @@ is **not** superseded, with the §1.2 argument for why an adjacent reader is not
 fallback; that remote rows carry no release; that routing stays downstream; that
 the six-touch-point rule for local families does not bind a remote catalog,
 because a remote catalog has no parser, model, migration or validation module
-(§3). Close open items 1, 2 and 6 (§9) or record them as still open.
+(§3). Close open items 1, 2 and 6 (§8) or record them as still open.
 
 **Files.** `docs/decisions/0002-*.md`, `docs/decisions/README.md`,
 `docs/reference/architecture.md` (one paragraph naming the second reader).
@@ -1528,9 +1255,9 @@ changed.
 
 **Scope.** `cone()` for exactly one Tier D catalog — one with **no local
 counterpart and no prospect of one**, so §5.2 cannot bite and the phase is not
-building something L1–L4 will later obsolete. **USNO-B1.0** (`I/284`) is the
+building something the local plan will later obsolete. **USNO-B1.0** (`I/284`) is the
 pick: 1.05 billion rows at ~420 GB puts it out of mirroring range permanently
-(§6.5), its schema is plain (`USNO-B1.0` designation as `native_id`, four plate
+([local-catalogs.md](local-catalogs.md) §2.7), its schema is plain (`USNO-B1.0` designation as `native_id`, four plate
 magnitudes plus B1/B2/R1/R2, no transformation expressions), and remote is
 therefore its only path — which is precisely the demand `RemoteCatalogReader`
 exists to serve. UCAC5 (`I/340`) is the alternative if a narrower schema is
@@ -1541,9 +1268,9 @@ Plus `skycat/remote/vizier.py` (transport, timeouts, bounded retries),
 `catalogs()`, `describe()`, `mag_min`/`mag_max` rendered by the mapping layer
 (§4.6), and a CLI `skycat remote cone` behind the extra.
 
-Tycho-2 was this phase's candidate in the previous revision. L1 mirrors it
-instead (§6.5, §6.7); it becomes a parity target for R1 rather than a remote
-catalog.
+Tycho-2 was this phase's candidate in an earlier revision. The local plan
+mirrors it instead ([local-catalogs.md](local-catalogs.md) §2.1, ~0.9 GB); it
+becomes a parity target for R1 rather than a remote catalog.
 
 Measure TAP versus the POST path here (open item 5) and record the result; it is
 the only phase where the answer is cheap to get.
@@ -1556,16 +1283,17 @@ failure and 2 with the extra uninstalled; offline fixture tests cover the whole
 path.
 
 **Stop here if** no consumer has asked by the time R2 lands. R0–R2 are
-valuable standalone, and after L1–L4 the remaining remote candidates are
-exactly Tier D — real, but nobody has requested them, and
+valuable standalone, and once the local plan lands the remaining remote
+candidates are exactly Tier D — real, but nobody has requested them, and
 `skynet-db` already has working remote providers for all six candidates.
 
 ### R4 — Remaining Tier D catalogs (1–2 days each)
 
 NOMAD (`I/297`), full Gaia DR3 (`I/355/gaiadr3`), full PanSTARRS DR2 (`II/349`),
-and whichever Tier C candidates L0/L4 pushed into Tier D on budget grounds —
+plus USNO-B1.0, and whichever candidates the local plan's measurements pushed
+into Tier D on budget grounds —
 added one def at a time, each with fixture tests, in priority order set by
-whoever asked. **Anything L1–L4 mirrored does not get a remote def**, except as a
+whoever asked. **Anything the local plan mirrored does not get a remote def**, except as a
 parity target; two paths to the same catalog is §1.2's problem re-entering through
 the back door.
 
@@ -1598,14 +1326,14 @@ bounded and timed out, with its magnitude filters actually filtering.
 - `skycat fetch` — §1.3.3.
 - Photometric transformation tables — §1.3.4.
 - Remote `batch_crossmatch` — §4.10.
-- **A remote def for any catalog the local track mirrored.** Tier A/B/C catalogs
+- **A remote def for any catalog the local plan mirrored.** Locally mirrored catalogs
   get a remote def only as an R1 parity target, never as a servable `cone()`
   catalog. Offering both paths to one catalog is the ambiguity §1.2 exists to
   prevent, arriving from the other direction.
 
 ---
 
-## 8. Testing strategy
+## 7. Testing strategy
 
 Three tiers, because the failure mode this whole document is about is *returning
 nothing without raising* (§2.9.2), and only the third tier catches it.
@@ -1642,7 +1370,7 @@ so the remote surface is held to the same standard.
 
 ---
 
-## 9. Open items to verify before implementing
+## 8. Open items to verify before implementing
 
 1. **Branch state of the downstream routing layer.** `catalogs/local/` in
    `skynet` has only stale bytecode on `pipeline/analysis-descriptive-split`.
@@ -1675,38 +1403,25 @@ so the remote surface is held to the same standard.
    silently returning nothing.
 8. **Does anything besides the two public-api routes call SIMBAD?** §2.6 found one
    integration by grep. Confirm before R5 plans its retirement.
-9. **The actual disk budget.** §6's tiers are sorted against a number this note
-   does not have: how much storage the production catalog host has, whether it is
-   shared, and whether it can absorb the §6.3 peak multiplier during a
-   `--replace`. The development host has 220 GB free; production is unknown.
-   **Blocks every local phase past L1.**
-10. **Which hemisphere.** Skynet operates telescopes north and south, which makes
-    PanSTARRS-versus-SkyMapper (§6.5, Tier C) a real question with a real answer.
-    Ask the pipeline owners; the answer may be "both", which doubles L4.
-11. **Measured bytes per row.** §6.2 is derived from the schema, not measured.
-    `skycat sizes` against the live DR10 partition settles it, and every GB figure
-    in §6.5 scales with the result. L0's first task.
-12. **Gaia DR3 GSPC row counts and band set.** ~220 M sources with ~102 M
-    standardised is the published shape; confirm both, and confirm which
-    synthetic bands the pipeline would actually resolve filters to before L2
-    designs the typed model (§7.L2).
-13. **Whether magnitude-limited releases need their own decision record.** §6.6
-    argues they change what a release means. Settle it with R0's record or
-    separately, but before L4 ships one.
+9. **Whether the Tier D set holds.** It is derived from
+   [local-catalogs.md](local-catalogs.md)'s sizing, which is itself derived from
+   a schema model rather than a measurement. If L0's measured bytes-per-row comes
+   in far above the model, catalogs move from the local plan into Tier D and R4
+   grows. That note's open items 1–3 are therefore inputs to this one.
 
 ---
 
-## 10. What would change the plan
+## 9. What would change the plan
 
 **Would justify accelerating R3–R4 past the local track:**
 
-- **L0 returning a small budget.** If production cannot absorb Tier B, the local
-  track ends at L1 and everything above it is remote by measurement rather than
-  by default. This is the most likely trigger and the reason L0 is first.
+- **The disk budget turning out to be much smaller than 4 TB, or shared.**
+  [local-catalogs.md](local-catalogs.md) open item 1. Then the local plan ends at
+  L1–L2 and everything above it becomes remote by measurement rather than by
+  default.
 - A consumer naming a Tier D catalog it needs now — full PanSTARRS, full Gaia
-  DR3, NOMAD, or a magnitude-unlimited deep survey. At ~1 TB each these are the
-  cases where a local mirror is a serious infrastructure commitment and, for
-  occasional use, unjustifiable.
+  DR3, NOMAD or SDSS. At ~1 TB each the first two cannot even be *rebuilt* inside
+  4 TB, so remote is their only path.
 - A second consumer of Skycat with no `skynet-db` provider layer of its own.
 - Long-tail need: VizieR has tens of thousands of catalogs, and a generic remote
   path makes a one-off comparison against an arbitrary designation possible
@@ -1715,14 +1430,18 @@ so the remote surface is held to the same standard.
 
 **Would justify deferring the remote track further:**
 
-- L0 returning a *large* budget. If Tier B and Tier C all fit with the peak
-  multiplier, the remote surface shrinks to NOMAD, full Gaia and SDSS — at which
-  point R3–R5 serve three catalogs of marginal value and R0–R2 (decision record,
-  parity harness, SIMBAD) are the whole worthwhile remote scope.
+- **The local plan landing in full.** Once L1–L4 are mirrored, Tier D is five
+  catalogs of which three (NOMAD, USNO-B1.0, SDSS) are of marginal scientific
+  value to this pipeline and two (full PanSTARRS, full Gaia) are largely
+  subsumed by ATLAS RefCat2 and GSPC respectively. At that point R3–R5 serve very
+  little and R0–R2 — decision record, parity harness, SIMBAD name resolution —
+  are the whole worthwhile remote scope. **This is the most likely outcome**, and
+  it is an argument for treating R0–R2 as the real remote deliverable and R3–R5
+  as optional.
 - L1 taking materially longer than 3–5 days. That would mean the six-touch-point
-  path is more expensive than
-  [guides/add-family.md](../guides/add-family.md) implies, which is a finding
-  about the local track worth fixing before adding a second one.
+  path is more expensive than [guides/add-family.md](../guides/add-family.md)
+  implies — a finding about the local track worth fixing before adding a second
+  surface to maintain.
 
 **Would justify reopening the fallback question** (and would require superseding
 decision 0001 in a written record, not a PR):
@@ -1743,6 +1462,12 @@ decision 0001 in a written record, not a PR):
 ---
 
 ## References
+
+**Companion note** — [local-catalogs.md](local-catalogs.md): the local mirroring
+plan this one is sequenced behind. It owns catalog sizing against the 4 TB
+budget, per-catalog download sources, the six touch points, ingestion at
+10⁸–10⁹ rows, and the L0–L5 phases. The Tier D set referenced throughout this
+note is defined there.
 
 **Skycat** — `skycat/client.py`, `skycat/query/cone.py`,
 `skycat/query/crossmatch.py`, `skycat/registry/catalog_defs.py`,
