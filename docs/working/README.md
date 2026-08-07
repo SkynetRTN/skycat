@@ -28,5 +28,6 @@ archivable until it is closed or explicitly dropped.
 | Note | Status | Why |
 |---|---|---|
 | [package-publishing-report.md](package-publishing-report.md) | **open** | Repository side is done, but no tag or release exists, so the install-from-a-real-release-asset check has never run. |
+| [remote-catalogs.md](remote-catalogs.md) | **open** | Feasibility of astroquery/VizieR remote support. Recommends one of four options (a dev-only parity harness); nothing implemented, and the two rejections would each need a decision record to overturn. |
 | [archive/design-review.md](archive/design-review.md) | archived | All 14 findings landed; the header table says where each one lives. |
 | [archive/github-workflow-recommendations.md](archive/github-workflow-recommendations.md) | archived | Recommendations 1–13 plus CODEOWNERS landed; the last open item, branch protection, is now live as the `Protect Main` and `Protect release tags` rulesets. |
