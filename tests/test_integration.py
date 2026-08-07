@@ -360,6 +360,126 @@ def test_active_release_deletion_protected(imported):
         remove_release(imported, "apass", "DR10")  # active, no --force
 
 
+def _register_removable_release(settings, name: str, table_template: str) -> tuple[int, str]:
+    """Register an inactive APASS release with a real attached partition and an
+    ingestion run, so the destructive path has something to destroy.
+
+    Synthetic rather than one of the fixture's six releases: the fixture is
+    session-scoped, other tests in this module pin ``apass_source_r1`` and
+    ``_r2`` by name, and a removed release cannot be put back under its old id.
+    Created as INGEST because that is the role that owns ``catalog_data`` tables
+    in production and the role ``remove_release`` itself runs as. Returns the
+    new release id and the partition name (which needs that id).
+    """
+    eng = create_catalog_engine(
+        settings.config_for(CatalogRole.INGEST), pool_size=1, max_overflow=0
+    )
+    try:
+        with eng.begin() as conn:
+            release_id = conn.execute(
+                text(
+                    "INSERT INTO catalog_registry.catalog_release "
+                    "(family_id, name, internal_schema_version, state, validation_status) "
+                    "SELECT f.id, :n, 1, 'superseded', 'passed' "
+                    "FROM catalog_registry.catalog_family f WHERE f.slug='apass' "
+                    "RETURNING id"
+                ),
+                {"n": name},
+            ).scalar_one()
+            table = table_template.format(id=release_id)
+            conn.execute(
+                text(
+                    f'CREATE TABLE catalog_data."{table}" PARTITION OF '
+                    f"catalog_data.apass_source FOR VALUES IN ({release_id})"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE catalog_registry.catalog_release "
+                    "SET production_table = :p WHERE id = :i"
+                ),
+                {"p": f"catalog_data.{table}", "i": release_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO catalog_registry.ingestion_run "
+                    "(release_id, status, stage) VALUES (:i, 'succeeded', 'attach')"
+                ),
+                {"i": release_id},
+            )
+        return release_id, table
+    finally:
+        eng.dispose()
+
+
+def _forget_removable_release(settings, release_id: int, table: str) -> None:
+    """Undo `_register_removable_release` if the test did not get that far."""
+    eng = create_catalog_engine(
+        settings.config_for(CatalogRole.INGEST), pool_size=1, max_overflow=0
+    )
+    try:
+        with eng.begin() as conn:
+            conn.execute(text(f'DROP TABLE IF EXISTS catalog_data."{table}"'))
+            conn.execute(
+                text("DELETE FROM catalog_registry.catalog_release WHERE id = :i"),
+                {"i": release_id},
+            )
+    finally:
+        eng.dispose()
+
+
+@pytest.mark.parametrize(
+    "table_template",
+    [
+        "apass_source_r{id}",  # the runner's own naming
+        "apass_source_archive_r{id}",  # a partition that does not follow it
+    ],
+)
+def test_remove_release_drops_the_partition_and_cascades(imported, table_template):
+    """The detach/drop/delete path, which the refusal test returns before.
+
+    The second parametrisation pins where the parent name comes from.
+    ``remove_release`` used to rebuild it as ``tbl.rsplit("_r", 1)[0]``, which
+    yields the nonexistent ``apass_source_archive`` here and leaves the
+    partition attached; the parent is read from ``pg_inherits`` instead, in the
+    query that already tests attachment.
+    """
+    name = f"TEST-REMOVE-{table_template}"
+    release_id, partition = _register_removable_release(imported, name, table_template)
+    try:
+        report = remove_release(imported, "apass", name)
+        assert report["production_table"] == f"catalog_data.{partition}"
+
+        eng = _reader(imported)
+        with eng.connect() as conn:
+            assert (
+                conn.execute(
+                    text("SELECT to_regclass(:t)"),
+                    {"t": f'catalog_data."{partition}"'},
+                ).scalar()
+                is None
+            ), "the partition survived remove_release"
+            assert (
+                conn.execute(
+                    text("SELECT count(*) FROM catalog_registry.catalog_release WHERE id=:i"),
+                    {"i": release_id},
+                ).scalar()
+                == 0
+            )
+            # ON DELETE CASCADE on ingestion_run.release_id: a removed release
+            # must not leave orphaned run rows behind.
+            assert (
+                conn.execute(
+                    text("SELECT count(*) FROM catalog_registry.ingestion_run WHERE release_id=:i"),
+                    {"i": release_id},
+                ).scalar()
+                == 0
+            )
+        eng.dispose()
+    finally:
+        _forget_removable_release(imported, release_id, partition)
+
+
 def test_idempotent_reimport_skips(imported):
     report = import_release(imported, "apass", "dr6")  # no replace, unchanged source
     assert report.skipped_reason is not None
