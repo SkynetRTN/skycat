@@ -27,6 +27,7 @@ archivable until it is closed or explicitly dropped.
 
 | Note | Status | Why |
 |---|---|---|
+| [code-review-2026-08.md](code-review-2026-08.md) | **open** | Engineering review of the runner, release state machine, query path, guards, roles, migrations, parsers, and CI. Eighteen findings — five high, seven medium, six low — of which twelve were reproduced against a throwaway PostGIS database. Nothing implemented; the five-phase action plan has not started. |
 | [ml-capabilities.md](ml-capabilities.md) | **open** | Capability study of five proposed ML features. Recommends building two (calibration-star quality, probabilistic crossmatching), prototyping one, deferring two, and replacing one with a sixth idea. Nothing implemented, and the four architectural constraints in §0.3 are not yet decided. |
 | [package-publishing-report.md](package-publishing-report.md) | **open** | Repository side is done, but no tag or release exists, so the install-from-a-real-release-asset check has never run. |
 | [remote-catalogs.md](remote-catalogs.md) | **open** | Feasibility of astroquery/VizieR remote support. Recommends one of four options (a dev-only parity harness); nothing implemented, and the two rejections would each need a decision record to overturn. |
