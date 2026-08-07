@@ -286,5 +286,27 @@ podman run --rm -v "$PWD:/repo:Z" --workdir /repo \
   zricethezav/gitleaks:latest dir /repo --config /repo/.gitleaks.toml --redact
 ```
 
-The full PostGIS suite needs a throwaway database — see README "Testing". Never
-point it at the Compose stack on 5433.
+The full PostGIS suite needs a throwaway database. Never point it at the
+Compose stack on 5433 or any catalog store you care about.
+
+One disposable local path is:
+
+```bash
+docker run -d --rm --name skycat-test-pg \
+  -e POSTGRES_USER=catalog_admin -e POSTGRES_PASSWORD=catalog \
+  -e POSTGRES_DB=catalogs -p 127.0.0.1:5434:5432 \
+  --tmpfs /var/lib/postgresql/data \
+  skycat-postgres:latest
+
+export SKYCAT_DB_HOST=127.0.0.1 SKYCAT_DB_PORT=5434 SKYCAT_DB_NAME=catalogs
+export SKYCAT_DB_BOOTSTRAP_USER=catalog_admin SKYCAT_DB_BOOTSTRAP_PASSWORD=catalog
+export SKYCAT_DB_ADMIN_USER=catalog_owner SKYCAT_DB_ADMIN_PASSWORD=catalog
+export SKYCAT_DB_INGEST_USER=catalog_ingest SKYCAT_DB_INGEST_PASSWORD=catalog
+export SKYCAT_DB_READER_USER=catalog_reader SKYCAT_DB_READER_PASSWORD=catalog
+export SKYCAT_DB_USER=catalog_reader SKYCAT_DB_PASSWORD=catalog
+
+uv run skycat init
+uv run pytest tests -q --require-postgis
+
+docker stop skycat-test-pg
+```
