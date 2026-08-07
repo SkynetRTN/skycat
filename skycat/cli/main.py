@@ -3,21 +3,29 @@
 One entry point for every catalog operation. Every destructive command is
 explicit (``--force`` and, for production-like targets, ``--allow-production``).
 Add ``--json`` for machine-readable output.
+
+Errors are messages, not tracebacks — see :class:`_FriendlyGroup`. Set
+``SKYCAT_DEBUG=1`` to get the original exception and its traceback back when the
+cause is a bug rather than an operator's input.
 """
 
 from __future__ import annotations
 
 import csv
 import json as jsonlib
+import os
 from contextlib import contextmanager
 
 import click
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from ..config import CatalogConfigError, CatalogRole, load_settings
-from ..database.engine import create_catalog_engine
+from ..database.engine import DriverConnectionError, create_catalog_engine
 from ..database.init import initialize_catalog_database, reset_catalog_database
 from ..database.migrate import current_revision, script_heads, upgrade
+from ..database.orm import MissingRowError
+from ..database.postgis import PostgisUnavailableError
 from ..health import health_report
 from ..ingestion import IngestionError, discover_all, discover_one, import_release
 from ..ingestion.maintenance import (
@@ -67,22 +75,80 @@ class _ConfigException(click.ClickException):
     exit_code = 2
 
 
+#: Environment variable that turns the friendly wrapper off. Named on the error
+#: path in the module docstring, because the day you need it is the day a
+#: message turned out to be hiding a bug rather than describing an input.
+DEBUG_ENV_VAR = "SKYCAT_DEBUG"
+
+#: Operational outcomes an operator needs to read. ``ValueError`` is in here on
+#: purpose: it is what ``validate_radec`` raises for ``--ra 400``,
+#: ``discover_one`` for an unknown family, and ``configparser`` for a password
+#: with a ``%`` in it — three different layers, one meaning at this boundary.
+_OPERATIONAL_ERRORS = (
+    CatalogQueryError,
+    IngestionError,
+    ReleaseStateError,
+    MissingRowError,
+    PostgisUnavailableError,
+    DriverConnectionError,
+    ValueError,
+)
+
+
+def _debug_enabled() -> bool:
+    return os.environ.get(DEBUG_ENV_VAR, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _driver_message(exc: DBAPIError) -> str:
+    """The driver's own words, without the statement or the bound parameters.
+
+    ``str(DBAPIError)`` appends ``[SQL: …]`` and ``[parameters: …]``. For a
+    refused connection that is pure noise around the one line that matters, and
+    for a failed bulk statement it can push a multi-kilobyte ``COPY`` — or a
+    bound value the caller would rather not see logged — into a Job's output.
+    """
+    orig = exc.orig
+    return str(orig).strip() if orig is not None else str(exc)
+
+
 class _FriendlyGroup(click.Group):
     """Render operator-input errors as messages rather than tracebacks.
 
     Lives on the group (not the console-script wrapper) so it applies to every
     entry point — ``skycat``, ``python -m skycat``, and CliRunner in the tests.
+
+    The catch is deliberately wide, because the set that escaped it was exactly
+    the set of ordinary mistakes: a stale ``SKYCAT_DB_PORT``, a rotated
+    password, a mistyped ``--ra``, an unknown family, a malformed crossmatch
+    CSV. Each of those printed thirty lines of Python at whoever was reading a
+    Kubernetes Job log. ``SKYCAT_DEBUG=1`` puts the traceback back.
+
+    **Exit codes are unchanged by the widening.** Everything here is code 1
+    except ``CatalogConfigError``, which keeps its 2. Reclassifying connectivity
+    and credential failures as *configuration* failures is a change to a
+    documented-stable surface (``docs/reference/api-stability.md``) that the
+    ingest Job reads, so it carries its own decision record rather than riding
+    along with a bug fix.
     """
 
     def invoke(self, ctx: click.Context):
+        if _debug_enabled():
+            # Diagnosis mode: no translation, so the original exception reaches
+            # the interpreter with its traceback intact.
+            return super().invoke(ctx)
         try:
             return super().invoke(ctx)
         except CatalogConfigError as exc:
             raise _ConfigException(str(exc)) from exc
-        except (CatalogQueryError, IngestionError, ReleaseStateError) as exc:
+        except DBAPIError as exc:
+            # Wrong port, wrong password, server down (OperationalError); a lost
+            # activate race (IntegrityError); a type the database refused
+            # (DataError, ProgrammingError). All of them arrive here wrapped.
+            raise click.ClickException(f"database error: {_driver_message(exc)}") from exc
+        except _OPERATIONAL_ERRORS as exc:
             # Unknown family/column, no active release, a missing source file, a
-            # failed import, an illegal state transition — operational outcomes
-            # the caller needs to read, not stack traces.
+            # failed import, an illegal state transition, a row that vanished
+            # under us, PostGIS missing, a dropped driver connection.
             raise click.ClickException(str(exc)) from exc
 
 
@@ -547,11 +613,19 @@ def crossmatch(
     """Batch crossmatch a CSV of `id,ra,dec` against a release."""
     inputs = []
     with open(input_csv, newline="") as fh:
-        reader = csv.reader(fh)
-        for row in reader:
+        for lineno, row in enumerate(csv.reader(fh), start=1):
             if not row or row[0].lower() in ("id", "input_id"):
                 continue
-            inputs.append((row[0], float(row[1]), float(row[2])))
+            try:
+                inputs.append((row[0], float(row[1]), float(row[2])))
+            except (IndexError, ValueError) as exc:
+                # Name the line. A crossmatch input is often thousands of rows
+                # generated by something else, and "could not convert string to
+                # float" alone leaves the operator diffing files by hand.
+                raise click.ClickException(
+                    f"{input_csv}:{lineno}: expected `id,ra,dec` with numeric "
+                    f"coordinates, got {row!r}"
+                ) from exc
     rows = batch_crossmatch(
         ctx.obj["settings"],
         family,
