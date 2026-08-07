@@ -16,10 +16,16 @@ fully READY and explicitly activated.
 Staging is committed before the transform so it survives a transform failure for
 diagnosis; registry/ingestion-run rows are written on a separate connection so a
 failure is always recorded (release -> FAILED).
+
+Phase boundaries are logged as structured events on the ``skycat.ingestion``
+logger — see :func:`_event` and docs/OPERATIONS.md. An import of APASS DR10 runs
+for hours; without them the only signals are the registry row (written at the
+start and the end, nothing in between) and the row-count callback.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 import socket
 import traceback
@@ -42,6 +48,7 @@ from ..constants import (
 )
 from ..database.base import CatalogBase
 from ..database.engine import create_catalog_engine
+from ..database.orm import require_row
 from ..models.registry import CatalogRelease, IngestionRun, ValidationSummary
 from ..registry import (
     activate_release,
@@ -60,8 +67,32 @@ from .discovery import compute_content_checksum, discover_one
 from .parsers import ParseStats, get_parser
 
 
+logger = logging.getLogger("skycat.ingestion")
+
+
 class IngestionError(RuntimeError):
     pass
+
+
+def _event(event: str, **fields) -> None:
+    """Emit one structured ingestion event.
+
+    The fields go under a single ``skycat`` key rather than being spread across
+    ``extra``: ``LogRecord`` already owns ``name``, ``module``, ``message`` and a
+    dozen others, and a field collision raises inside the logging call — which
+    would turn an observability nicety into an import failure.
+
+    The rendered message repeats the fields, so a plain
+    ``logging.basicConfig()`` is still readable; a JSON formatter reads
+    ``record.skycat`` and gets them typed.
+    """
+    payload = {"event": event, **fields}
+    logger.info(
+        "%s %s",
+        event,
+        " ".join(f"{k}={v}" for k, v in fields.items()),
+        extra={"skycat": payload},
+    )
 
 
 @dataclass
@@ -210,6 +241,20 @@ def import_release(
     )
     run_id: int | None = None
 
+    _event(
+        "import.started",
+        family=family_slug,
+        release=rel_def.name,
+        target=ingest_cfg.target_summary(),
+        source_dir=str(discovered.source_dir),
+        source_files=len(discovered.data_files),
+        source_bytes=discovered.total_bytes,
+        checksum=checksum,
+        checksum_mode="content" if content_checksum else "manifest",
+        replace=replace,
+        force=force,
+    )
+
     try:
         # --- registry bookkeeping (own connection, committed per step) --------
         with Session(engine) as meta:
@@ -244,6 +289,14 @@ def import_release(
                     "already imported (matching checksum); use --replace to force"
                 )
                 report.imported = int(release.imported_row_count or 0)
+                _event(
+                    "import.skipped",
+                    family=family_slug,
+                    release=rel_def.name,
+                    release_id=release.id,
+                    state=report.state,
+                    reason="unchanged_checksum",
+                )
                 return report
 
             was_active = release.state == CatalogReleaseState.ACTIVE.value
@@ -317,6 +370,20 @@ def import_release(
         report.validation_status = status.value
         report.checks = [c.to_dict() for c in checks]
 
+        _event(
+            "phase_a.completed",
+            family=family_slug,
+            release=rel_def.name,
+            release_id=release_id,
+            run_id=run_id,
+            staging_table=staging_table,
+            parsed=stats.parsed,
+            loaded=loaded,
+            rejected=rejected,
+            malformed=stats.malformed,
+            validation_status=status.value,
+        )
+
         if status == ValidationStatus.FAILED:
             raise IngestionError(
                 "Staging validation failed (critical): "
@@ -338,6 +405,19 @@ def import_release(
         incoming_chk = f"{incoming}_relchk"
         data_cols = copy_loader.data_column_names(table)
         col_list = ", ".join(f'"{c}"' for c in data_cols)
+
+        _event(
+            "phase_b1.started",
+            family=family_slug,
+            release=rel_def.name,
+            release_id=release_id,
+            run_id=run_id,
+            building=incoming,
+            # The long pole. Nothing else is logged until the transform, primary
+            # key, replicated indexes, and ANALYZE are all done, which on the
+            # largest families is most of the import's wall clock.
+            note="detached build; the current partition keeps serving reads",
+        )
 
         # Phase B1 — transform + index + validate the detached replacement. Takes
         # no lock on the partition parent (only the new standalone table).
@@ -402,6 +482,16 @@ def import_release(
         # name, and ATTACH it. The parent's ACCESS EXCLUSIVE lock is held only for
         # these metadata operations, not the rebuild. DDL is transactional, so a
         # failure here rolls the swap back and leaves the old partition serving.
+        _event(
+            "phase_b1.completed",
+            family=family_slug,
+            release=rel_def.name,
+            release_id=release_id,
+            run_id=run_id,
+            rows=int(imported),
+            validation_status=summarize(prod_checks).value,
+        )
+
         with engine.begin() as conn:
             _drop_existing_partition(conn, data_table, release_id)
             conn.execute(text(f'ALTER TABLE {incoming_fqn} RENAME TO "{child}"'))
@@ -415,6 +505,15 @@ def import_release(
                 text(f'ALTER TABLE {child_fqn} DROP CONSTRAINT "{incoming_chk}"')
             )
 
+        _event(
+            "phase_b2.swapped",
+            family=family_slug,
+            release=rel_def.name,
+            release_id=release_id,
+            run_id=run_id,
+            partition=f"{SCHEMA_DATA}.{child}",
+        )
+
         checks += prod_checks
         report.imported = int(imported)
         report.production_table = f"{SCHEMA_DATA}.{child}"
@@ -424,7 +523,10 @@ def import_release(
 
         # --- finalize registry -------------------------------------------------
         with Session(engine) as meta:
-            release = meta.get(CatalogRelease, release_id)
+            release = require_row(
+                meta.get(CatalogRelease, release_id),
+                f"catalog_release id={release_id}",
+            )
             release.parsed_row_count = stats.parsed
             release.imported_row_count = int(imported)
             release.rejected_row_count = rejected
@@ -448,7 +550,7 @@ def import_release(
                     checks=[c.to_dict() for c in checks],
                 )
             )
-            run = meta.get(IngestionRun, run_id)
+            run = require_row(meta.get(IngestionRun, run_id), f"ingestion_run id={run_id}")
             run.status = IngestionRunStatus.SUCCEEDED.value
             run.stage = "ready"
             run.parsed_row_count = stats.parsed
@@ -485,10 +587,31 @@ def import_release(
         if not keep_staging:
             with engine.begin() as conn:
                 conn.execute(text(f"DROP TABLE IF EXISTS {staging_fqn}"))
+
+        _event(
+            "import.completed",
+            family=family_slug,
+            release=rel_def.name,
+            release_id=release_id,
+            run_id=run_id,
+            state=report.state,
+            activated=report.activated,
+            imported=report.imported,
+            rejected=rejected,
+            validation_status=report.validation_status,
+            partition=report.production_table,
+        )
         return report
 
     except Exception as exc:  # noqa: BLE001 - record failure then re-raise
         detail = {"error": str(exc), "traceback": traceback.format_exc()[-4000:]}
+        _event(
+            "import.failed",
+            family=family_slug,
+            release=rel_def.name,
+            run_id=run_id,
+            error=str(exc),
+        )
         try:
             with Session(engine) as meta:
                 rel = meta.scalar(
@@ -498,8 +621,10 @@ def import_release(
                         "WHERE f.slug = :fs AND r.name = :rn"
                     ).bindparams(fs=family_slug, rn=rel_def.name)
                 )
-                if rel is not None:
-                    release = meta.get(CatalogRelease, rel)
+                # No require_row here: this is the recorder, and a raise would be
+                # swallowed below, costing the FAILED marking *and* the run row.
+                release = meta.get(CatalogRelease, rel) if rel is not None else None
+                if release is not None:
                     if release.state != CatalogReleaseState.ACTIVE.value:
                         release.state = CatalogReleaseState.FAILED.value
                         release.failure_detail = detail

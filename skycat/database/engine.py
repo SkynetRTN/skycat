@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 
-from sqlalchemy import Engine, create_engine, event, text
+from sqlalchemy import Connection, Engine, create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import CatalogDatabaseConfig
@@ -17,8 +18,34 @@ from ..config import CatalogDatabaseConfig
 __all__ = [
     "create_catalog_engine",
     "create_session_factory",
+    "driver_connection",
     "session_scope",
 ]
+
+
+class DriverConnectionError(RuntimeError):
+    """The raw DBAPI connection behind a SQLAlchemy ``Connection`` was gone."""
+
+
+def driver_connection(conn: Connection) -> Any:
+    """The raw psycopg3 connection behind ``conn``.
+
+    ``COPY`` is a driver-level protocol with no SQLAlchemy Core expression, so
+    the two bulk paths (staging load, crossmatch input upload) reach through to
+    psycopg. ``driver_connection`` is typed Optional because it is ``None`` once
+    the pooled connection has been invalidated or returned — which never happens
+    inside an open ``begin()`` block, but the type checker cannot know that.
+
+    Returns ``Any``: the point is to leave SQLAlchemy's typing behind and speak
+    psycopg (``.cursor()``, ``.copy()``) deliberately, in one named place.
+    """
+    raw = conn.connection.driver_connection
+    if raw is None:
+        raise DriverConnectionError(
+            "no live DBAPI connection behind this SQLAlchemy Connection — it was "
+            "closed or invalidated before the COPY could start"
+        )
+    return raw
 
 
 def create_catalog_engine(config: CatalogDatabaseConfig, **overrides) -> Engine:

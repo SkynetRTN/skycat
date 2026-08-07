@@ -82,6 +82,37 @@ schemas — are path-filtered and therefore stay advisory.
   and sdist once, smoke-tests both install paths, then attaches those exact
   artifacts to a draft GitHub Release from the `github-release` environment.
 
+## Action versions
+
+Every action tracks a **moving major** (`@v7`, not `@v7.1.2`), and every one
+resolves to a `node24` runtime. Node 20 actions still execute — the runner
+force-runs them on Node 24 — but they emit a deprecation warning on every step
+and are on a removal path, so "it worked yesterday" is not a reason to leave one
+behind.
+
+Two constraints when bumping:
+
+- **`upload-artifact` and `download-artifact` must stay a matched pair.** They
+  interoperate through `@actions/artifact`, and the majors are staggered:
+  upload `v4` ↔ download `v4`/`v5` (artifact 2.x), and upload `v7` ↔ download
+  `v8` (artifact 6.x). Bumping one alone produces a job that uploads
+  successfully and a dependent job that cannot find the artifact — which is how
+  `container scan` and the release publish step would break.
+- **`actions/dependency-review-action` is pinned exactly**, to `v5.0.0`. That
+  repository publishes majors as branches rather than tags, and `@v5` is
+  flagged by zizmor's ref-confusion audit as resolvable from either namespace.
+  Since zizmor gates `required: workflow safety`, that is a blocking finding,
+  not a style note.
+
+Check a bump before making it — the ref must exist, the runtime must be
+`node24`, and the inputs in use must survive:
+
+```bash
+gh api repos/actions/checkout/git/ref/tags/v7 --jq .object.sha
+gh api "repos/actions/checkout/contents/action.yml?ref=v7" --jq .content \
+  | tr -d '\n' | base64 -d | grep -E "^  [a-z-]+:|node[0-9]+"
+```
+
 ## Branch protection
 
 Workflows cannot configure this — it is a repository setting, and it is what

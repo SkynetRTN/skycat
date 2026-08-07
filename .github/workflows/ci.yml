@@ -52,12 +52,12 @@ jobs:
       - name: Map catalog service port
         run: echo "SKYCAT_DB_PORT=${{ job.services.catalogs.ports['5432'] }}" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -77,24 +77,20 @@ jobs:
       - name: Initialize catalog database
         run: uv run skycat init
 
-      - name: Guard postgis tests
-        run: |
-          uv run python - <<'PY'
-          from skycat.config import CatalogRole, CatalogSettings
-          from skycat.database.engine import create_catalog_engine
-
-          engine = create_catalog_engine(
-              CatalogSettings.from_env().config_for(CatalogRole.READER),
-              pool_size=1,
-              max_overflow=0,
-          )
-          with engine.connect() as conn:
-              conn.exec_driver_sql("SELECT 1")
-          print("reader role reachable - postgis tests will run")
-          PY
-
       - name: Test
-        run: uv run pytest tests -q
+        # --require-postgis turns "no database reachable" from a skip into a
+        # hard error. Without it this job's whole reason to exist — the
+        # integration tests — can vanish silently and still report green.
+        run: uv run pytest tests -q --require-postgis
+
+      - name: Deep health report
+        # Diagnostics only, and only when something already failed: it names
+        # which part of the contract (PostGIS, schemas, roles, migrations,
+        # active releases) is missing, which a fixture connection error does
+        # not. `health` exits 1 on an unhealthy target; the job has already
+        # failed by this point, so that changes nothing.
+        if: failure()
+        run: uv run skycat health
 
   unit-matrix:
     # pyproject declares >=3.11,<3.14 but the deep gate only proves 3.12. The
@@ -108,12 +104,12 @@ jobs:
     env:
       UV_PYTHON: ${{ matrix.python-version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -130,12 +126,12 @@ jobs:
     name: migration graph
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -156,12 +152,12 @@ jobs:
     name: package build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock

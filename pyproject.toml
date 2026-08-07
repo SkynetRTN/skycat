@@ -95,8 +95,23 @@ ignore = []
 
 [tool.pyright]
 # Basic-mode type gate: catch obvious bugs without drowning in SQLAlchemy /
-# GeoAlchemy generic-typing noise. High-volume categories are downgraded to
-# warning so the gate is "no new basic-mode errors"; tighten as follow-ups land.
+# GeoAlchemy generic-typing noise.
+#
+# Two tiers, and the split is deliberate:
+#
+#   error   — the null-safety family. Every one of these means "this may be
+#             None here", which in this package is a real defect: an ORM row
+#             that vanished, a pooled connection that was already returned. The
+#             fix is `database/orm.require_row` or an explicit branch, never a
+#             suppression. These were warnings until the registry/ingestion
+#             sites were cleaned up; the gate is now zero, and keeping it there
+#             is the point.
+#
+#   warning — the categories that fire on SQLAlchemy/GeoAlchemy generics
+#             (`Column[str]` where a `str` is wanted, and similar). They are
+#             currently at zero too, but they cannot be promoted without the
+#             next model change turning generic-typing noise into a merge
+#             blocker. Promote one at a time, once each has stayed quiet.
 include = ["skycat"]
 exclude = [".venv", "**/__pycache__"]
 pythonVersion = "3.11"
@@ -104,17 +119,17 @@ typeCheckingMode = "basic"
 venvPath = "."
 venv = ".venv"
 reportMissingTypeStubs = "none"
+reportAttributeAccessIssue = "error"
+reportOptionalMemberAccess = "error"
+reportOptionalSubscript = "error"
+reportOptionalOperand = "error"
+reportIndexIssue = "error"
 reportGeneralTypeIssues = "warning"
 reportArgumentType = "warning"
-reportAttributeAccessIssue = "warning"
 reportAssignmentType = "warning"
 reportReturnType = "warning"
 reportCallIssue = "warning"
-reportOptionalMemberAccess = "warning"
-reportOptionalSubscript = "warning"
-reportIndexIssue = "warning"
 reportOperatorIssue = "warning"
-reportOptionalOperand = "warning"
 reportPrivateImportUsage = "warning"
 
 [tool.hatch.build.targets.wheel]

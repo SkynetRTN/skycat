@@ -25,6 +25,97 @@ skycat-postgres db: catalogs  127.0.0.1:5433  vol catalog_postgres_data (referen
 * Each catalog family is one `LIST (release_id)` partitioned table; activation
   flips a registry flag (atomic) and never rewrites rows.
 
+### Schema map
+
+`catalog_release.id` is the hinge: it is the registry's primary key, the
+partition key of every family table, and the name of the physical partition
+(`<parent>_r<release_id>`). Nothing else joins the three schemas together.
+
+```mermaid
+erDiagram
+    CATALOG_FAMILY  ||--o{ CATALOG_RELEASE : "has releases"
+    CATALOG_RELEASE ||--o{ INGESTION_RUN : "import attempts"
+    CATALOG_RELEASE ||--o{ VALIDATION_SUMMARY : "validation passes"
+    INGESTION_RUN   ||--o| VALIDATION_SUMMARY : "produced"
+    CATALOG_RELEASE ||--|| DATA_PARTITION : "backed by (release_id)"
+    DATA_PARTITION  }o--|| DATA_PARENT : "ATTACHed to"
+
+    CATALOG_FAMILY {
+        int    id PK
+        string slug UK "apass, vsx, landolt, stetson"
+        string data_table "catalog_data parent"
+        bool   enabled
+    }
+    CATALOG_RELEASE {
+        int      id PK "= partition key"
+        int      family_id FK
+        string   name "DR10, current, 1992"
+        string   state "one ACTIVE per family"
+        string   validation_status
+        string   source_checksum "provenance"
+        bigint   imported_row_count
+        string   production_table
+    }
+    INGESTION_RUN {
+        int       id PK
+        int       release_id FK
+        string    status "running/succeeded/failed"
+        string    stage
+        jsonb     detail "malformed examples"
+        timestamp started_at
+    }
+    VALIDATION_SUMMARY {
+        int    id PK
+        int    release_id FK
+        int    ingestion_run_id FK
+        string status
+        jsonb  checks
+    }
+    DATA_PARENT {
+        string name "catalog_data.apass_source"
+        string partitioning "LIST (release_id)"
+        index  gist_geom "GiST on geom"
+    }
+    DATA_PARTITION {
+        string name "apass_source_r3"
+        int    release_id PK "CHECK release_id = N"
+        bigint id PK
+        string native_id
+        double ra_deg
+        double dec_deg
+        geography geom "GENERATED, geography(Point,4326)"
+    }
+```
+
+`catalog_staging` holds no permanent rows and joins to nothing: unlogged
+`<family>_<release>_stg` tables during an import, plus retained
+`<family>_<release>_rejects` tables afterwards for diagnosis.
+
+### Release lifecycle
+
+A release only becomes ACTIVE through an explicit, atomic activation from a
+fully-built state. A failed or incomplete release can never auto-activate.
+
+```mermaid
+stateDiagram-v2
+    [*] --> REGISTERED: register (first import)
+    REGISTERED --> STAGING: import starts
+    STAGING --> READY: staged, built, indexed, validated
+    STAGING --> FAILED: any error
+    READY --> ACTIVE: activate (explicit, or --activate)
+    ACTIVE --> SUPERSEDED: another release activated
+    SUPERSEDED --> ACTIVE: activate (rollback)
+    READY --> FAILED: re-import fails
+    FAILED --> STAGING: re-import
+    ACTIVE --> ACTIVE: import --replace --force (stays ACTIVE through the swap)
+    SUPERSEDED --> [*]: remove-release
+    FAILED --> [*]: remove-release
+```
+
+The self-loop is the one worth reading twice: replacing the ACTIVE release keeps
+it ACTIVE for the whole rebuild, because the replacement is built detached and
+swapped in atomically. The family is never left without an active release.
+
 ## Local Docker Compose
 
 ```bash

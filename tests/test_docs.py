@@ -31,15 +31,42 @@ from skycat.cli.main import main as cli_group
 PKG_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PKG_ROOT
 
-DOCS = [PKG_ROOT / "README.md", REPO_ROOT / "docs" / "SKYCAT_DATABASE.md"]
-#: Placeholder paths/flags that are illustrative by design.
-PLACEHOLDERS = ("000N", "<family>", "<release>")
+DOCS = [
+    PKG_ROOT / "README.md",
+    REPO_ROOT / "docs" / "SKYCAT_DATABASE.md",
+    REPO_ROOT / "docs" / "API_STABILITY.md",
+    REPO_ROOT / "docs" / "ADD_FAMILY.md",
+    REPO_ROOT / "docs" / "PROVENANCE.md",
+    REPO_ROOT / "docs" / "OPERATIONS.md",
+    REPO_ROOT / "docs" / "PERFORMANCE.md",
+]
+#: Placeholder paths/flags that are illustrative by design. ``tycho2`` is the
+#: project's standing worked example for adding a family (README and
+#: ADD_FAMILY.md) — the day it becomes a real family, drop it from this tuple
+#: and the citations start being checked.
+PLACEHOLDERS = ("000N", "<family>", "<release>", "tycho2")
 
 
 def _docs() -> list[Path]:
     # The package is a standalone uv project; the repo-level docs may not be
     # present in every checkout. Its own README always is.
     return [d for d in DOCS if d.exists()]
+
+
+def _all_markdown() -> list[Path]:
+    """Every stable doc, for checks that need no code introspection.
+
+    Broader than ``DOCS``: link and heading rot is worth catching in the design
+    record and the decision log too, and neither costs anything to check.
+    ``docs/working/`` stays excluded for the reason in the module docstring.
+    """
+    found = [PKG_ROOT / "README.md"]
+    found += sorted(
+        p
+        for p in (REPO_ROOT / "docs").rglob("*.md")
+        if "working" not in p.relative_to(REPO_ROOT).parts
+    )
+    return [p for p in found if p.exists()]
 
 
 def _code_blocks(text: str, lang: str) -> list[str]:
@@ -148,3 +175,67 @@ def test_cited_source_files_exist(doc):
         if not any(p in path for p in PLACEHOLDERS) and not (PKG_ROOT / path).exists()
     ]
     assert not missing, f"{doc.name} cites files that do not exist: {missing}"
+
+
+@pytest.mark.parametrize("doc", _docs(), ids=lambda p: p.name)
+def test_group_flags_precede_the_subcommand(doc):
+    """``skycat cone apass --json`` is a documented command that cannot run.
+
+    ``--json`` is declared on the Click *group*, so it is only accepted before
+    the subcommand name. Click rejects it afterwards with "No such option",
+    which the command/flag test above cannot see: it accepts a group flag
+    anywhere on the line, since that is the only way to tell a group flag from
+    an unknown one.
+    """
+    problems = []
+    for block in _code_blocks(doc.read_text(encoding="utf-8"), "bash"):
+        for raw in block.splitlines():
+            line = raw.split("#", 1)[0].strip()
+            match = re.search(r"\bskycat\b\s+(.*)", line)
+            if not match:
+                continue
+            tokens = match.group(1).split()
+            sub_index = next(
+                (i for i, t in enumerate(tokens) if not t.startswith("-")), None
+            )
+            if sub_index is None:
+                continue
+            for token in tokens[sub_index + 1 :]:
+                flag = token.split("=", 1)[0]
+                if flag in GROUP_FLAGS and flag not in COMMANDS.get(
+                    tokens[sub_index], ()
+                ):
+                    problems.append(
+                        f"{flag} is a group option and must come before "
+                        f"`{tokens[sub_index]}`  ({line})"
+                    )
+    assert not problems, f"{doc.name} documents a CLI invocation that fails:\n  " + "\n  ".join(
+        problems
+    )
+
+
+#: Link targets that are not repository paths.
+_EXTERNAL_LINK = re.compile(r"^(https?:|mailto:|#)")
+
+
+@pytest.mark.parametrize("doc", _all_markdown(), ids=lambda p: str(p.name))
+def test_relative_links_resolve(doc):
+    """A moved doc takes its links with it, and nothing notices.
+
+    ``docs/design/skycat-design.md`` was moved twice and pointed at
+    ``../../../skycat/...`` — one level above the repository root — the whole
+    time. Neither ruff, pyright, nor the citation test above could see it,
+    because a markdown link is not a backticked path.
+    """
+    text = doc.read_text(encoding="utf-8")
+    broken = []
+    for target in re.findall(r"\[[^\]]*\]\(([^)\s]+)\)", text):
+        if _EXTERNAL_LINK.match(target):
+            continue
+        path, _, _anchor = target.partition("#")
+        if not path or any(p in path for p in PLACEHOLDERS):
+            continue
+        if not (doc.parent / path).resolve().exists():
+            broken.append(target)
+    rel = doc.relative_to(REPO_ROOT)
+    assert not broken, f"{rel} links to paths that do not exist: {sorted(set(broken))}"

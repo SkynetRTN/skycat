@@ -17,6 +17,7 @@ from ..constants import (
     CatalogReleaseState,
 )
 from ..database.engine import create_catalog_engine
+from ..database.orm import require_row
 from ..models.registry import CatalogRelease, ValidationSummary
 from ..registry.releases import resolve_release
 from ..validation import summarize, validate_production
@@ -185,7 +186,10 @@ def revalidate_release(
                     checks=[c.to_dict() for c in checks],
                 )
             )
-            release = session.get(CatalogRelease, release_id)
+            release = require_row(
+                session.get(CatalogRelease, release_id),
+                f"catalog_release id={release_id}",
+            )
             release.validation_status = status.value
             release.validated_at = datetime.now(timezone.utc)
             session.commit()

@@ -12,19 +12,27 @@ uv run pyright skycat                        # types (CI gate)
 
 uv run pytest tests -q -m "not postgis"      # unit suite — no database needed
 uv run pytest tests -q                       # full suite — postgis tests SKIP if no DB is reachable
+uv run pytest tests -q --require-postgis     # full suite — unreachable DB is a FAILURE
 uv run pytest tests/test_parsers.py -q       # one module
 uv run pytest tests/test_cli_exit_codes.py::test_withheld_activation_is_not_success -q
 
 uv run skycat <command>                      # the CLI, host-run against SKYCAT_DB_*
 ```
 
-`pytest` never fails for a missing database — it silently degrades to the unit suite. A green local
-run therefore proves nothing about migrations, roles, COPY, partitions, or spatial indexes. Run the
-integration suite before claiming a change works end to end.
+Plain `pytest` never fails for a missing database — it silently degrades to the unit suite. A green
+local run therefore proves nothing about migrations, roles, COPY, partitions, or spatial indexes.
+Use `--require-postgis` (or `SKYCAT_REQUIRE_POSTGIS=1`) before claiming a change works end to end;
+it aborts collection with one clear message instead of 57 skips, and it is what CI runs.
 
 CI runs these plus a 3.11/3.12/3.13 unit matrix, Alembic graph validation, a wheel-install smoke
 test, and workflow/container/manifest/secret checks. `docs/CI.md` maps the workflows to their
 required-check names and gives container-based local equivalents for each.
+
+`docs/` also holds the contracts worth reading before changing behaviour: `API_STABILITY.md` (what
+may not move), `ADD_FAMILY.md` (the worked version of the six touch points), `PROVENANCE.md`
+(source layout, checksum modes), `OPERATIONS.md` (what each destructive command destroys, the
+`skycat.ingestion` structured events, credential rotation), `PERFORMANCE.md`, `RELEASE.md`, and
+`decisions/` for choices already settled.
 
 ### Integration tests destroy catalog data
 
@@ -99,9 +107,15 @@ for migrations, bootstrap only for `init`.
 ## Conventions
 
 - **Docs are tested.** `tests/test_docs.py` asserts every `skycat` command/flag and every
-  `CatalogReader` method/kwarg shown in `README.md` and `docs/SKYCAT_DATABASE.md` exists, and that
-  cited `skycat/*.py` paths exist. Change a CLI flag or reader signature → update those docs in the
-  same commit. `docs/working/` is excluded by design (dated planning notes, not current API).
+  `CatalogReader` method/kwarg shown in the stable docs exists, that cited `skycat/*.py` paths
+  exist, that every relative markdown link resolves, and that group-level flags (`--json`) are
+  written *before* the subcommand — Click rejects them after it. Change a CLI flag or reader
+  signature → update the docs in the same commit. `docs/working/` is excluded by design (dated
+  planning notes, not current API).
+- **Pyright's null-safety rules are errors, the SQLAlchemy-generic ones are warnings**
+  (`pyproject.toml` explains the split). `reportOptionalMemberAccess` and friends are at zero;
+  fix them with `database/orm.require_row` or an explicit branch, never a suppression. Enum-valued
+  registry columns are `String` and annotated `Mapped[str]`; writers pass `.value`.
 - **Safety guards are load-bearing.** `assert_not_reserved_database()` before any engine that
   mutates; `looks_production()` gates destructive commands; import prints its target before loading.
 - **CLI errors are messages, not tracebacks.** `_FriendlyGroup` maps `CatalogConfigError` → exit 2

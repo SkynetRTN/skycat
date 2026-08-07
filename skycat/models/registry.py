@@ -3,6 +3,16 @@
 These describe catalog *families* and their *releases* independently from the
 bulk catalog rows, and record ingestion runs, validation, and source manifests.
 They never reference application tables outside the catalog schemas.
+
+**Enum-valued columns are stored as text, and annotated as text.** ``state``,
+``validation_status`` and ``status`` hold exactly the members of
+:class:`~skycat.constants.CatalogReleaseState`, :class:`ValidationStatus` and
+:class:`IngestionRunStatus`, but the column type is ``String`` rather than a
+PostgreSQL ``ENUM``: adding a lifecycle state stays an ordinary code change
+instead of a migration that rewrites a type used by every release row. Reads
+therefore return ``str``, so the annotations say ``str`` and writers pass
+``.value``. Annotating them as the enum types would document a conversion that
+does not happen and put a type error on every assignment in the package.
 """
 
 from __future__ import annotations
@@ -95,11 +105,13 @@ class CatalogRelease(CatalogBase, TimestampMixin):
     imported_row_count: Mapped[int | None] = mapped_column(BigInteger)
     rejected_row_count: Mapped[int | None] = mapped_column(BigInteger)
 
-    # Lifecycle.
-    state: Mapped[CatalogReleaseState] = mapped_column(
+    # Lifecycle. Stored as plain text (see the module note on enum columns):
+    # the annotation is `str` because that is what a query returns, and the
+    # values are exactly `CatalogReleaseState` / `ValidationStatus` members.
+    state: Mapped[str] = mapped_column(
         String(32), default=CatalogReleaseState.REGISTERED.value, nullable=False, index=True
     )
-    validation_status: Mapped[ValidationStatus] = mapped_column(
+    validation_status: Mapped[str] = mapped_column(
         String(32), default=ValidationStatus.NOT_RUN.value, nullable=False
     )
 
@@ -136,7 +148,7 @@ class IngestionRun(CatalogBase):
         nullable=False,
         index=True,
     )
-    status: Mapped[IngestionRunStatus] = mapped_column(
+    status: Mapped[str] = mapped_column(
         String(32), default=IngestionRunStatus.RUNNING.value, nullable=False
     )
     stage: Mapped[str | None] = mapped_column(String(64))
@@ -173,7 +185,7 @@ class ValidationSummary(CatalogBase):
     ingestion_run_id: Mapped[int | None] = mapped_column(
         ForeignKey(f"{SCHEMA_REGISTRY}.ingestion_run.id", ondelete="SET NULL")
     )
-    status: Mapped[ValidationStatus] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
     # List of {name, level (info|warning|critical), passed (bool), detail}.
     checks: Mapped[list | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(

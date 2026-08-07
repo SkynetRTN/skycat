@@ -113,14 +113,21 @@ def radius_to_deg(
     *, radius_deg: float | None = None, radius_arcmin: float | None = None,
     radius_arcsec: float | None = None,
 ) -> float:
-    provided = [r for r in (radius_deg, radius_arcmin, radius_arcsec) if r is not None]
+    # (value, arcunits-per-degree) pairs, so the "exactly one" check and the
+    # conversion read off the same list — no branch can outlive its guard.
+    provided = [
+        (value, per_degree)
+        for value, per_degree in (
+            (radius_deg, 1.0),
+            (radius_arcmin, 60.0),
+            (radius_arcsec, 3600.0),
+        )
+        if value is not None
+    ]
     if len(provided) != 1:
         raise CatalogQueryError("Specify exactly one of radius_deg / radius_arcmin / radius_arcsec")
-    if radius_deg is not None:
-        return radius_deg
-    if radius_arcmin is not None:
-        return radius_arcmin / 60.0
-    return radius_arcsec / 3600.0
+    value, per_degree = provided[0]
+    return value / per_degree
 
 
 def _data_table(data_table: str):
