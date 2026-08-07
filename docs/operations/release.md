@@ -102,7 +102,7 @@ python -m venv /tmp/skycat-testpypi
 /tmp/skycat-testpypi/bin/python -m pip install \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  skycat==0.1.0
+  skycat==0.1.1
 /tmp/skycat-testpypi/bin/skycat --help
 ```
 
@@ -110,7 +110,7 @@ PyPI install check:
 
 ```bash
 python -m venv /tmp/skycat-pypi
-/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.0
+/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.1
 /tmp/skycat-pypi/bin/skycat --help
 ```
 
@@ -120,13 +120,13 @@ Direct wheel install from a GitHub Release:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.0/skycat-0.1.0-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.1/skycat-0.1.1-py3-none-any.whl
 ```
 
 Source install from a Git tag:
 
 ```bash
-python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.0"
+python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.1"
 ```
 
 Both forms install Skycat software only. They do not create or populate the
@@ -135,7 +135,7 @@ catalog database.
 After PyPI publishing is complete, the package-index install form is:
 
 ```bash
-python -m pip install skycat==0.1.0
+python -m pip install skycat==0.1.1
 ```
 
 ## Pre-release checklist
