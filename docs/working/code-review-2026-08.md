@@ -3,7 +3,7 @@ status: open
 reviewed: 2026-08-07
 branch: docs/code-review-audit
 authority: code-inspection (skycat @ 7e7cf2d, origin/dev) + ruff/pyright/pytest gates + full PostGIS suite and twelve reproductions against a throwaway PostgreSQL 16 / PostGIS 3.5 on 127.0.0.1:5435
-implementation: not-started
+implementation: phases 1-3 landed 2026-08-07; phases 4-6 open
 ---
 
 # Skycat code review, August 2026
@@ -18,6 +18,72 @@ environment actually do when something goes wrong.
 The gates are clean and the happy paths are correct. Every finding below is a
 failure path, and twelve of the eighteen were reproduced against a live
 database rather than inferred.
+
+> **Status: phases 1–3 landed (2026-08-07); phases 4–6 open.** Eleven findings
+> and one half-finding have been implemented. The findings below are kept
+> verbatim as the record of what was wrong; the table says where each one now
+> lives. Three were resolved differently from the suggestion, and two of the
+> review's own claims turned out to be wrong — all noted under the table.
+>
+> | # | Finding | Phase | Where it landed |
+> |---|---|---|---|
+> | F1 | Failed `--replace` poisons the checksum | 1 | `ingestion/runner.py` — provenance writes moved into the post-swap finalize block; the attempt's provenance parked on `IngestionRun.detail` |
+> | F6 | Failed `--replace` strands a good release | 1 | `ingestion/runner.py`, `health.py` — the STAGING demotion is gone; in-flight status keys off the `IngestionRun` row |
+> | F9 | Failure recorder fails silently | 1 | `ingestion/runner.py` — `_record_failure()` on an independent short-lived engine, logging `import.record_failed` at ERROR |
+> | F13 | `failure_detail = None` writes JSON `null` | 1 | `models/registry.py` — `JSONB(none_as_null=True)` |
+> | F3 | Tracebacks on operator input | 2 (partial) | `cli/main.py` — `_FriendlyGroup` extended to `DBAPIError`, `ValueError`, `MissingRowError`, `PostgisUnavailableError`, `DriverConnectionError`; `SKYCAT_DEBUG=1` restores the traceback. **Exit-code taxonomy deferred to phase 5** |
+> | F5 | Special character in a password breaks `init` | 2 | `database/migrate.py` — `_ini_literal()` at the configparser boundary |
+> | F10 | Caller-input errors escape as `ValueError` | 2 | `query/cone.py`, `query/crossmatch.py` — `_validate_centre()`, `_validate_limit()`, shared `_python_type()` |
+> | F14 | DR10 parser drops non-numeric lines | 2 | `ingestion/parsers/apass.py` — explicit header recognition, everything else counted |
+> | F18 | Two stable docs outside the doc test | 2 | `tests/test_docs.py` — `ci.md` and `release.md` added, plus a rewritten invocation matcher |
+> | F4 | Autogenerate drops every partition | 3 | `database/autogen.py` (new), `migrations/env.py`, all four family models, `models/registry.py`, `database/base.py` |
+> | F15 | `remove_release` string-splits the parent | 3 | `ingestion/maintenance.py` — `inhparent::regclass` from the existing `pg_inherits` query |
+> | F17 | Dead capture group in the replicator | 3 | `ingestion/runner.py` |
+>
+> **Open.** F2, F7, F8, F11, F12, F16, and F3's exit-code taxonomy. Phases 4, 5
+> and 6 all depended on phase 1 or 2, and are now unblocked; phase 5 still needs
+> its decision record.
+>
+> **Deviations.** F5 was fixed with the one-line configparser escape rather than
+> the cleaner `cfg.attributes["connection"]` route, because `migrations/env.py`
+> does not read `config.attributes` and restructuring `run_migrations_online()`
+> would have collided with phase 3's edits to the same `context.configure`
+> calls. F4 used `include_name` rather than the suggested `include_object`: the
+> object hook runs after reflection, which is too late both for `tiger`
+> (`permission denied`) and for a 128M-row family's partitions. F6 took the
+> `IngestionRun` route rather than save-and-restore, on the reasoning that a
+> release's state should describe the partition on disk *always*, and that
+> save-and-restore only shrinks the window in which the row lies — and requires
+> the failure handler to run to be correct, which is exactly what F9 shows can
+> fail to happen.
+>
+> **Two claims in this review were wrong.** F9 says the recorder "can fail
+> silently"; it always did. Its query was `SELECT id FROM catalog_release r JOIN
+> catalog_family f`, and both tables have an `id` column, so PostgreSQL rejected
+> it as `AmbiguousColumn` on every invocation and the bare `except Exception:
+> pass` swallowed it. No failure had ever been recorded — no FAILED state, no
+> `failure_detail`, no run-row update — which is also why F6's reproduction
+> found releases stranded in STAGING. F18 says adding the two documents "passes
+> today"; it does not. `uv run ruff check skycat tests` was read as a `skycat
+> tests` invocation, because the matcher accepted `skycat` anywhere on a line.
+> The command lines were correct, so the test was fixed rather than the docs.
+>
+> **Found while implementing**, outside the review's scope but fixed here:
+> `migrations/env.py` called `fileConfig()` with the default
+> `disable_existing_loggers=True`, which disables every logger already created
+> in the process — so any long-lived process that migrated and then imported had
+> `skycat.ingestion` silenced for the rest of its life. `NAMING_CONVENTION["ix"]`
+> was `ix_%(column_0_label)s`, and a column label carries the schema for a
+> schema-qualified table, so the metadata's index names could never match the
+> migrations'. `docs/guides/add-family.md` had a "Verify without a database:"
+> block listing a command annotated "needs a database".
+>
+> **Consequence for phase 6.** F6's resolution changes what F16's diagram
+> correction should say. The state diagram should now *lose*
+> `REGISTERED → STAGING`, `STAGING → READY`, `STAGING → FAILED` and
+> `FAILED → STAGING`, and gain `REGISTERED → READY` plus self-loops for READY
+> and SUPERSEDED on a failed replace. The two arcs F16 asks for no longer need
+> adding — the runner no longer takes them.
 
 ## 1. Verdict
 
