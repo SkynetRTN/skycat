@@ -39,6 +39,8 @@ DOCS = [
     REPO_ROOT / "docs" / "guides" / "provenance.md",
     REPO_ROOT / "docs" / "operations" / "runbook.md",
     REPO_ROOT / "docs" / "operations" / "performance.md",
+    REPO_ROOT / "docs" / "operations" / "ci.md",
+    REPO_ROOT / "docs" / "operations" / "release.md",
 ]
 #: Placeholder paths/flags that are illustrative by design. ``tycho2`` is the
 #: project's standing worked example for adding a family (README and
@@ -83,6 +85,20 @@ def _code_blocks(text: str, lang: str) -> list[str]:
     ]
 
 
+#: ``skycat`` *invoked*, as opposed to ``skycat`` the package directory passed to
+#: something else — ``uv run ruff check skycat tests`` is a correct command line
+#: in which ``tests`` is not a subcommand. So the token has to sit in command
+#: position: at the start of the (stripped) line, after a shell separator, after
+#: a runner's ``run``, or at the end of a path like ``/tmp/pkgcheck/bin/skycat``.
+_SKYCAT_INVOCATION = re.compile(r"(?:^|[$|;]\s*|&&\s*|\brun\s+|[\w.-]*/)skycat\s+(.+)")
+
+
+def _invocation(line: str) -> list[str] | None:
+    """The argument tokens of a ``skycat`` command line, or None if it isn't one."""
+    match = _SKYCAT_INVOCATION.search(line)
+    return match.group(1).split() if match else None
+
+
 def _cli_surface() -> tuple[dict[str, set[str]], set[str]]:
     commands = {}
     for name, cmd in cli_group.commands.items():
@@ -104,10 +120,9 @@ def test_documented_cli_commands_and_flags_exist(doc):
     for block in _code_blocks(doc.read_text(encoding="utf-8"), "bash"):
         for raw in block.splitlines():
             line = raw.split("#", 1)[0].strip()
-            match = re.search(r"\bskycat\b\s+(.*)", line)
-            if not match:
+            tokens = _invocation(line)
+            if tokens is None:
                 continue
-            tokens = match.group(1).split()
             sub = next((t for t in tokens if not t.startswith("-")), None)
             if sub is None or any(p in sub for p in PLACEHOLDERS):
                 continue
@@ -197,10 +212,9 @@ def test_group_flags_precede_the_subcommand(doc):
     for block in _code_blocks(doc.read_text(encoding="utf-8"), "bash"):
         for raw in block.splitlines():
             line = raw.split("#", 1)[0].strip()
-            match = re.search(r"\bskycat\b\s+(.*)", line)
-            if not match:
+            tokens = _invocation(line)
+            if tokens is None:
                 continue
-            tokens = match.group(1).split()
             sub_index = next(
                 (i for i, t in enumerate(tokens) if not t.startswith("-")), None
             )
