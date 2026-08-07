@@ -7,13 +7,13 @@ implementation: not-started
 document-type: research survey — inputs for a future design, not a design
 ---
 
-# Locally mirrorable catalogs — what exists, where to get it, and whether it is worth the disk
+# Local catalog mirrors — what to store with 12 TB available
 
 **What this document is.** A survey of the astronomical data sources Skycat could
-mirror into PostgreSQL/PostGIS, with the evidence needed to decide which ones
-should be. For each candidate: what it is, what it uniquely provides, exactly
+mirror into PostgreSQL/PostGIS now that the storage envelope is **12 TB** rather
+than 4 TB. For each candidate: what it is, what it uniquely provides, exactly
 where the bulk files live, what format and volume they arrive in, what they would
-cost on disk, and a verdict with reasoning.
+cost on disk, and whether it deserves local operational priority.
 
 **What this document is not.** It is not a design, an architecture decision, or
 an implementation plan. It does not specify models, parsers, migrations or APIs.
@@ -23,14 +23,15 @@ this, [remote-catalogs.md](remote-catalogs.md), and
 [guides/add-family.md](../guides/add-family.md), and have everything needed to
 plan the work.
 
-**Companion:** [remote-catalogs.md](remote-catalogs.md) surveys the sources that
-*cannot* usefully be mirrored and must be queried live. The two documents divide
-the same landscape along one line: **does the provider distribute bulk files, and
-is the volume worth the disk?**
+**Companion:** [remote-catalogs.md](remote-catalogs.md) surveys remotely queried
+catalog providers as a separate implementation track. The split is intentional:
+local mirror decisions do not require remote support, and remote catalog
+definitions do not imply local mirroring. This document decides what is worth
+storing.
 
 ---
 
-## 1. Four systems, and why only one of them is a mirroring channel
+## 1. Four systems, and why only one of them is a bulk mirror channel
 
 The four astronomical data systems in scope are not four catalogs. They are four
 different kinds of thing, and the difference determines which document each
@@ -43,9 +44,10 @@ belongs in.
 | **NED** | IPAC, Caltech | Object **database** — extragalactic | One object: cross-IDs, redshift, photometry, references | **No** general export. Curated subsets only |
 | **ADS** | CfA, Harvard | **Literature** database | A paper | **No.** Token-authenticated API |
 
-**Only VizieR distributes bulk files, so only VizieR is a mirroring channel.**
-That is the structural reason this document is mostly about VizieR-and-friends
-and [remote-catalogs.md](remote-catalogs.md) is mostly about the other three.
+**Only VizieR distributes bulk files among these four systems, so only VizieR is
+a bulk mirror channel.** That is the structural reason this document is about
+bulk distribution and [remote-catalogs.md](remote-catalogs.md) is about live
+query surfaces. The two are deliberately separate design tracks.
 
 Three important qualifications:
 
@@ -118,8 +120,8 @@ standalone table and the staging copy simultaneously:
 This is a consequence of a design property worth keeping — it is what lets a
 `--replace` of the active release stay active throughout — and it means **the
 largest catalog you mirror sets your headroom requirement.** It is the single
-most important number in this document, because it is what disqualifies the
-terabyte-class candidates.
+most important number in this document, because it determines whether a release
+can be rebuilt safely rather than merely stored.
 
 ### 2.3 What is stored today
 
@@ -133,26 +135,33 @@ terabyte-class candidates.
 | | | **steady** | **≈ 107 GB** |
 | | | **peak during a DR10 rebuild** | **≈ 240 GB** |
 
-### 2.4 The 4 TB envelope
+### 2.4 The 12 TB envelope
 
-| Set | Steady | Largest release | Peak | Fits 4 TB? |
+With 12 TB available, the storage conclusion changes materially. The rebuild rule
+still matters, but it no longer disqualifies the terabyte-class catalogs. Even a
+broad local mirror set fits with rebuild headroom; the binding constraints become
+science value, import time, operational maintenance and schema complexity. The
+sets below are cumulative.
+
+| Set | Steady | Largest release | Peak | Uses 12 TB |
 |---|---|---|---|---|
-| Today | 107 GB | 77 GB | 240 GB | ✅ 6 % |
-| + Tycho-2, RefCat2 m<18, GSPC | 858 GB | 285 GB | 1.36 TB | ✅ 34 % |
-| + 2MASS, RefCat2 extended to m<19 | 1.05 TB | 595 GB | 2.09 TB | ✅ 52 % |
-| + SkyMapper, UCAC5, USNO-B1.0 | 1.68 TB | 595 GB | 2.72 TB | ✅ 68 % |
-| + full Pan-STARRS DR2 | 2.83 TB | 1.15 TB | **4.84 TB** | ❌ |
-| + full Gaia DR3 main | 2.78 TB | 1.10 TB | **4.71 TB** | ❌ |
+| Today | 107 GB | 77 GB | 240 GB | 2 % |
+| Today + core additions: Tycho-2, RefCat2 m<19, GSPC, 2MASS | 1.05 TB | 595 GB | 2.09 TB | 17 % |
+| + SkyMapper, UCAC5, USNO-B1.0 | 1.68 TB | 595 GB | 2.72 TB | 23 % |
+| + Pan-STARRS DR2 | 2.83 TB | 1.15 TB | 4.84 TB | 40 % |
+| + Gaia DR3 main instead of Pan-STARRS | 2.78 TB | 1.10 TB | 4.71 TB | 39 % |
+| + both Pan-STARRS DR2 and Gaia DR3 main | 3.93 TB | 1.15 TB | 5.94 TB | 50 % |
+| + NOMAD as well | 4.38 TB | 1.15 TB | 6.39 TB | 53 % |
 
-**The boundary is set by the rebuild rule, not by catalog size.** Either
-terabyte-class catalog *fits* on the disk; neither can be *rebuilt* on it. A
-release that cannot be re-imported cannot be fixed, which defeats the point of
-having releases at all.
+The arithmetic means **"too large to rebuild" is no longer a valid local
+verdict for this hardware**. Pan-STARRS DR2 and Gaia DR3 main are now feasible
+from a disk perspective. They may still be wrong local priorities, but that
+argument has to be about duplication, consumer need, import duration or query
+shape — not capacity.
 
-Everything else fits, with about a third of the disk left over. The binding
-constraint on the local plan is implementation effort, not storage — which is the
-opposite of the usual assumption and should be stated plainly to whoever plans
-the work.
+This also changes what a low-priority local verdict means. It should no longer
+mean "we cannot afford the disk." It means "do not spend local ingestion effort
+until a consumer proves the local mirror is useful."
 
 ---
 
@@ -165,8 +174,9 @@ recipe, and the `--cut-dirs` depth trap are already documented in
 [guides/provenance.md](../guides/provenance.md); that guide is the authority for
 the mechanics.
 
-VizieR is the right channel for **small-to-medium published tables**. For the
-big surveys it mirrors, prefer the native archive (§3.2–§3.4).
+VizieR is the right bulk channel for **small-to-medium published tables**. For
+the big surveys it mirrors, prefer the native archive (§3.2–§3.4) for local
+ingest.
 
 #### Tycho-2 — `I/259` ✅ **mirror**
 
@@ -207,22 +217,23 @@ current designation before mirroring (open item 8).
 better astrometry, ATLAS-RefCat2 is better photometry. It fits easily; it is just
 not worth having.
 
-#### USNO-B1.0 — `I/284` ❌ **defer to remote**
+#### USNO-B1.0 — `I/284` ❌ **low-priority local**
 
 1,045,175,762 rows, ~420 GB. Photographic-plate photometry.
 
-**Reasoning.** It *fits* the budget. It is deferred because it is not worth 420
-GB — RefCat2 is better for every calibration use, and plate photometry carries
-scatter the pipeline should prefer to avoid. This is a different and more
-defensible reason than "too big", and it is only available once the arithmetic is
-done.
+**Reasoning.** It fits easily in 12 TB. It remains low priority because RefCat2
+is better for every calibration use, and plate photometry carries scatter the
+pipeline should prefer to avoid. Remote support is still useful for legacy
+comparison and arbitrary VizieR queries; local ingestion should wait for a named
+consumer.
 
-#### NOMAD — `I/297` ❌ **defer to remote**
+#### NOMAD — `I/297` ❌ **low-priority local**
 
 1,117,612,732 rows, ~450 GB. A *compilation* of Tycho-2, UCAC, USNO-B and 2MASS.
 
-**Reasoning.** Mirror the components, never the merge. A merged catalog inherits
-every input's errors while obscuring which input each value came from.
+**Reasoning.** Mirror the components, not the merge. A merged catalog inherits
+every input's errors while obscuring which input each value came from. With 12 TB
+it could be stored, but capacity does not make the science case stronger.
 
 #### The long tail
 
@@ -307,12 +318,13 @@ discover` shows which files are present. §4.2 explains why that matters.
 sizes, not from published counts (open item 5), and the format choice is
 undecided (open item 7). Downloading one 5.9 GB tarball would settle both.
 
-#### Pan-STARRS DR2 — `II/349` ❌ **defer to remote**
+#### Pan-STARRS DR2 — `II/349` ⚠️ **feasible, but not a core mirror**
 
-1,919,106,885 rows, ~1.15 TB. Fails the §2.2 rebuild test at 4 TB. And RefCat2
-already carries PS1-derived griz, all-sky, to m < 19, homogenised — mirroring
-Pan-STARRS would mean paying 1.15 TB for the un-homogenised version of data
-already present.
+1,919,106,885 rows, ~1.15 TB. It passes the §2.2 rebuild test on 12 TB, so the
+old storage objection is gone. RefCat2 already carries PS1-derived griz, all-sky,
+to m < 19, homogenised; mirroring Pan-STARRS locally means paying import and
+schema cost for the native, un-homogenised product. Do it only if a consumer
+needs native PS1 quantities that RefCat2 deliberately does not expose.
 
 ### 3.4 ESA Gaia Archive — `https://gea.esac.esa.int/archive/`
 
@@ -332,7 +344,7 @@ already present.
 *measured* standardised Johnson magnitudes. It is the direct answer to the
 photometric transformation coefficients the legacy providers apply — the Lupton,
 Jester, Jordi and Tonry expressions inventoried in
-[remote-catalogs.md](remote-catalogs.md) §2.2 — because a pipeline calibrating in
+[remote-catalogs.md](remote-catalogs.md) §3.2 — because a pipeline calibrating in
 Johnson V against a measured synthetic V does not need coefficients at all.
 That is a science-quality improvement, not merely a storage decision.
 
@@ -347,18 +359,20 @@ Archive; whether there is a direct bulk CSV path or whether a paginated ADQL
 export is required is unverified (open item 3). This changes the mirroring
 procedure, not the verdict.
 
-#### Gaia DR3 main — `I/355/gaiadr3` ❌ **defer to remote**
+#### Gaia DR3 main — `I/355/gaiadr3` ⚠️ **feasible, but not a core mirror**
 
-1,811,709,771 rows, ~1.10 TB. Fails the §2.2 rebuild test. GSPC is the
-photometrically useful subset at one seventh the size.
+1,811,709,771 rows, ~1.10 TB. It also passes the rebuild test on 12 TB. GSPC is
+the photometrically useful subset at one seventh the size, so the main table
+should be treated as a separate astrometry/source-identity product rather than a
+photometric-calibration prerequisite. Mirror it when a consumer needs that
+broader Gaia source model locally.
 
 ### 3.5 AAVSO — `https://www.aavso.org/download-apass-data`
 
 **APASS** (DR6 and DR10) is already mirrored and is the current workhorse:
 B, V, g′, r′, i′ to V ≈ 17, saturating around V ≈ 10. Distributed by AAVSO
 directly, not by CDS. Note that VizieR carries only DR9 (`II/336/apass9`), a
-release Skycat does not have — see [remote-catalogs.md](remote-catalogs.md) §5.2
-for why that matters.
+release Skycat does not have.
 
 **VSX** (`B/vsx/vsx`) is also already mirrored: a living index of variable stars,
 used to *exclude* variables from calibration star lists rather than as a
@@ -463,39 +477,47 @@ makes that boundary cheaper to hold rather than harder.
 
 | Verdict | Catalog | Channel | On disk | Reason |
 |---|---|---|---|---|
-| ✅ **Mirror** | Tycho-2 | CDS `I/259` | ~0.9 GB | Bright end; costs nothing; already the worked example in the guide |
-| ✅ **Mirror** | ATLAS-RefCat2 (m<18, extend later) | MAST | ~285 GB | All-sky griz+JHK to m<19, homogenised; subsumes Pan-STARRS and much of SkyMapper |
-| ✅ **Mirror** | Gaia DR3 GSPC | ESA | ~155 GB | Measured standardised Johnson UBVRI + Sloan ugriz; replaces transformation coefficients |
-| ✅ **Mirror** | 2MASS PSC | IRSA | ~190 GB | Only full all-sky JHK with native quality flags |
-| ⚠️ Conditional | SkyMapper | CDS / ANU | ~170 GB | Only for native southern u/v |
+| ✅ **Core mirror** | Tycho-2 | CDS `I/259` | ~0.9 GB | Bright end; costs nothing; already the worked example in the guide |
+| ✅ **Core mirror** | ATLAS-RefCat2 (m<19) | MAST | ~595 GB | All-sky griz+JHK to m<19, homogenised; subsumes Pan-STARRS and much of SkyMapper for calibration |
+| ✅ **Core mirror** | Gaia DR3 GSPC | ESA | ~155 GB | Measured standardised Johnson UBVRI + Sloan ugriz; replaces transformation coefficients |
+| ✅ **Core mirror** | 2MASS PSC | IRSA | ~190 GB | Only full all-sky JHK with native quality flags |
+| ⚠️ Conditional local | SkyMapper | CDS / ANU | ~170 GB | Only for native southern u/v |
+| ⚠️ Feasible optional | Pan-STARRS DR2 | MAST / VizieR | ~1.15 TB | Fits on 12 TB; mirror only for native PS1 quantities not supplied by RefCat2 |
+| ⚠️ Feasible optional | Gaia DR3 main | ESA / VizieR | ~1.10 TB | Fits on 12 TB; mirror only for broader Gaia astrometry/source identity beyond GSPC |
 | 🔍 Investigate | NED-LVS | IPAC | small | Extragalactic; depends on whether the pipeline needs host galaxies |
 | ❌ Skip | UCAC5 | CDS `I/340` | ~45 GB | Superseded by Gaia and RefCat2 |
-| ❌ Defer | USNO-B1.0 | CDS `I/284` | ~420 GB | Fits, but plate photometry is not worth the disk |
-| ❌ Defer | NOMAD | CDS `I/297` | ~450 GB | A compilation — mirror the components |
-| ❌ Defer | Pan-STARRS DR2 | MAST | ~1.15 TB | Cannot be rebuilt in 4 TB; RefCat2 already carries its griz |
-| ❌ Defer | Gaia DR3 main | ESA | ~1.10 TB | Cannot be rebuilt in 4 TB; GSPC is the useful subset |
+| ❌ Low-priority local | USNO-B1.0 | CDS `I/284` | ~420 GB | Fits, but plate photometry is not worth ingestion effort without a named consumer |
+| ❌ Low-priority local | NOMAD | CDS `I/297` | ~450 GB | A compilation — mirror the components |
 
-**Recommended set: Tycho-2 + RefCat2 + GSPC + 2MASS ≈ 1.05 TB steady, ≈ 2.09 TB
-peak — about half of 4 TB.**
+**Core local store: current mirrors + Tycho-2 + RefCat2 m<19 + GSPC + 2MASS ≈
+1.05 TB steady, ≈ 2.09 TB peak — about 17 % of 12 TB.**
+
+**Broad all-candidate store: the core local store plus SkyMapper, UCAC5,
+USNO-B1.0, Pan-STARRS DR2, Gaia DR3 main and NOMAD ≈ 4.38 TB steady, ≈ 6.39 TB
+peak — about 53 % of 12 TB.**
 
 **Suggested ordering, and the reasoning behind it** (a research verdict, not a
 project plan — a design agent should re-derive the sequencing against its own
 effort estimates):
 
 1. **Measure first.** Bytes/row and import throughput are both unknown (§4.4,
-   open item 2), and every subsequent estimate scales with them. Confirm the 4 TB
-   is dedicated rather than shared with WAL and backups (open item 1).
+   open item 2), and every subsequent estimate scales with them. Confirm how much
+   of the 12 TB is available after WAL, backups and staging policy.
 2. **Tycho-2**, because it is under a gigabyte, adds a capability the store
    lacks, and the guide already walks through it. It also serves as a low-stakes
    validation that the six-touch-point path costs what the guide implies — worth
    knowing before attempting the same work at 400× the row count.
-3. **RefCat2 at m < 18**, because it is the highest-value single addition and
-   because starting at m < 18 halves its cost while remaining deeper than Skynet
-   frames need. Extending to m < 19 is a later partition swap.
+3. **RefCat2 at m < 19**, because the storage envelope now supports the full
+   calibration-depth mirror from the start. If import throughput is worse than
+   expected, the magnitude-binned distribution still gives a reversible way to
+   stage m < 18 first.
 4. **GSPC**, with a direct comparison against the transformation coefficients as
    the thing that demonstrates the value.
-5. **2MASS**, conditional on open item 6.
-6. **SkyMapper**, conditional on open item 8.
+5. **2MASS**, unless RefCat2's JHK coverage proves sufficient for all current
+   consumers.
+6. **Optional native products** — SkyMapper, Pan-STARRS DR2, Gaia DR3 main,
+   USNO-B1.0 and NOMAD — only when a consumer names the native quantities it
+   needs locally.
 
 ---
 
@@ -503,10 +525,11 @@ effort estimates):
 
 Ordered by how much they gate.
 
-1. **Is the 4 TB dedicated to catalog data?** WAL, backups, and the
+1. **How much of the 12 TB is usable catalog headroom?** WAL, backups, and the
    staging/standalone copies during a rebuild share the volume unless
-   deliberately separated, and WAL during a 10⁹-row ingest is not small. Gates
-   everything past Tycho-2.
+   deliberately separated, and WAL during a 10⁹-row ingest is not small. The new
+   envelope has room for every candidate in this survey, but operational policy
+   still determines how aggressively to rebuild large releases.
 2. **Measured bytes per row, and measured import throughput.** §2.1 is
    schema-derived; §4.4 has no number at all. `skycat sizes` and a timed APASS
    DR10 re-import settle both. Every GB and every schedule in this document
@@ -519,7 +542,8 @@ Ordered by how much they gate.
    protection), so whether `tyc2.dat` arrives whole or chunked must be confirmed
    at mirror time. Also: is `suppl_1.dat` data or auxiliary?
 5. **RefCat2 row counts per magnitude bin.** Inferred from compressed tarball
-   sizes, not published counts. Confirm before committing to m < 18 vs m < 19.
+   sizes, not published counts. Confirm before estimating import duration or
+   deciding whether to stage m < 18 before m < 19.
 6. **Does the pipeline need JHK beyond what RefCat2 carries?** Determines whether
    2MASS is worth 190 GB.
 7. **RefCat2 format: MAST CSV or original scaled-integer?** One 5.9 GB download
@@ -532,13 +556,12 @@ Ordered by how much they gate.
    non-stellar sources.
 10. **Do magnitude-limited releases need a decision record?** §4.2. Settle before
     any such release ships.
-
 ---
 
 ## 7. References
 
-**Companion** — [remote-catalogs.md](remote-catalogs.md): SIMBAD, NED, ADS and
-the VizieR catalogs deferred here.
+**Companion** — [remote-catalogs.md](remote-catalogs.md): remotely queried
+catalog providers, SIMBAD, NED and ADS.
 
 **Skycat** — `skycat/models/apass.py`, `skycat/models/mixins.py`,
 `skycat/ingestion/runner.py`, `skycat/registry/catalog_defs.py`;
