@@ -13,7 +13,7 @@ require; the rest are advisory or path-filtered.
 | `kubernetes.yml` | `kubernetes manifests` | `infra/kubernetes/**` | advisory |
 | `codeql.yml` | `codeql python` | every PR, weekly | advisory |
 | `secret-scan.yml` | `secret scan` | every PR, push to `main` | advisory |
-| `release.yml` | `build release distributions`, `publish draft GitHub Release` | release tags, manual dispatch | release-only |
+| `release.yml` | `build release distributions`, `publish draft GitHub Release`, `publish distributions to TestPyPI`, `publish distributions to PyPI` | release tags, manual dispatch | release-only |
 
 ## Require the aggregates, not the jobs
 
@@ -54,7 +54,9 @@ schemas — are path-filtered and therefore stay advisory.
   has neither guarantee: `alembic.ini` is intentionally *not* packaged, and
   `make_alembic_config()` falls back to setting `script_location` itself. The
   job installs the wheel into a clean environment and proves the packaged
-  migrations still resolve to exactly one head.
+  migrations still resolve to exactly one head. It also runs
+  `twine check --strict dist/*` so PyPI long-description and metadata failures
+  are caught before a release tag.
 - **`compose config`** — asserts the eight service names the README and the
   documented local test workflow tell people to run.
 - **`container scan`** — advisory on purpose. Base-image CVEs frequently have no
@@ -98,16 +100,20 @@ schemas — are path-filtered and therefore stay advisory.
   published and still needs rotating.
 - **`release.yml`** is not a PR gate. It runs for `v*.*.*` tags or explicit
   manual dispatch, verifies the tag matches `pyproject.toml`, builds the wheel
-  and sdist once, smoke-tests both install paths, then attaches those exact
-  artifacts to a draft GitHub Release from the `github-release` environment.
+  and sdist once, checks package metadata with Twine, smoke-tests both install
+  paths, then attaches those exact artifacts to a draft GitHub Release from the
+  `github-release` environment. Manual dispatch can also upload the same tested
+  artifacts to TestPyPI or PyPI through Trusted Publishing; tag pushes do not
+  publish to package indexes.
 
 ## Action versions
 
-Every action tracks a **moving major** (`@v7`, not `@v7.1.2`), and every one
-resolves to a `node24` runtime. Node 20 actions still execute — the runner
-force-runs them on Node 24 — but they emit a deprecation warning on every step
-and are on a removal path, so "it worked yesterday" is not a reason to leave one
-behind.
+Most actions track a **moving major** (`@v7`, not `@v7.1.2`). Exact tags are
+used where a repository-specific security concern makes a moving ref a poor
+fit. JavaScript actions should resolve to a `node24` runtime. Node 20 actions
+still execute — the runner force-runs them on Node 24 — but they emit a
+deprecation warning on every step and are on a removal path, so "it worked
+yesterday" is not a reason to leave one behind.
 
 Two constraints when bumping:
 
@@ -122,9 +128,13 @@ Two constraints when bumping:
   flagged by zizmor's ref-confusion audit as resolvable from either namespace.
   Since zizmor gates `required: workflow safety`, that is a blocking finding,
   not a style note.
+- **`pypa/gh-action-pypi-publish` is pinned exactly**, currently to `v1.14.1`.
+  The project recommends Trusted Publishing, but its moving `release/v1` branch
+  is a worse fit for a workflow that already treats release publishing as a
+  code-owned supply-chain boundary.
 
-Check a bump before making it — the ref must exist, the runtime must be
-`node24`, and the inputs in use must survive:
+Check a JavaScript action bump before making it — the ref must exist, the
+runtime must be `node24`, and the inputs in use must survive:
 
 ```bash
 gh api repos/actions/checkout/git/ref/tags/v7 --jq .object.sha
@@ -203,6 +213,16 @@ approving the deployment, not merely on the tag existing. The build job runs
 first and uploads artifacts; the publish job waits for approval and attaches
 those exact files without rebuilding.
 
+### `testpypi` and `pypi` environments
+
+The package-index publish jobs use GitHub environments named `testpypi` and
+`pypi`, matching the names configured in PyPI/TestPyPI Trusted Publishers. The
+jobs request only job-level `id-token: write`, download the tested
+`release-dists` artifact, and call `pypa/gh-action-pypi-publish@v1.14.1`.
+
+Protect `pypi` with required reviewer approval. `testpypi` may be protected too
+if the project wants the same manual gate for rehearsal uploads.
+
 ### CODEOWNERS
 
 [`.github/CODEOWNERS`](../../.github/CODEOWNERS) assigns the CI definition, schema
@@ -253,6 +273,7 @@ uvx zizmor@1 --min-severity medium --min-confidence medium .github/workflows
 
 # packaging
 uv build
+uv run --frozen --extra dev twine check --strict dist/*
 uv venv /tmp/pkgcheck && uv pip install --python /tmp/pkgcheck/bin/python dist/*.whl
 /tmp/pkgcheck/bin/skycat --help
 

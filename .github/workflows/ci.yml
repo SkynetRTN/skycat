@@ -168,6 +168,9 @@ jobs:
       - name: Build sdist + wheel
         run: uv build
 
+      - name: Check package metadata
+        run: uv run --frozen --extra dev twine check --strict dist/*
+
       - name: Install the wheel into a clean environment
         run: |
           uv venv /tmp/pkgcheck

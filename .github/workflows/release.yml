@@ -9,6 +9,21 @@ on:
       tag:
         description: "Existing release tag to publish, for example v0.1.0"
         required: true
+      publish_github_release:
+        description: "Publish or refresh the draft GitHub Release"
+        required: true
+        type: boolean
+        default: true
+      publish_to_testpypi:
+        description: "Upload the tested distributions to TestPyPI"
+        required: true
+        type: boolean
+        default: false
+      publish_to_pypi:
+        description: "Upload the tested distributions to PyPI"
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -68,6 +83,9 @@ jobs:
 
       - name: Build sdist and wheel
         run: uv build
+
+      - name: Check package metadata
+        run: uv run --frozen --python 3.12 --extra dev twine check --strict dist/*
 
       - name: Inspect distribution archives
         run: |
@@ -141,6 +159,7 @@ jobs:
     name: publish draft GitHub Release
     runs-on: ubuntu-latest
     needs: release-build
+    if: github.event_name == 'push' || inputs.publish_github_release
     environment: github-release
     permissions:
       contents: write
@@ -160,3 +179,48 @@ jobs:
           draft: true
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+  testpypi-publish:
+    name: publish distributions to TestPyPI
+    runs-on: ubuntu-latest
+    needs: release-build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_to_testpypi
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/skycat
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@v1.14.1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          print-hash: true
+
+  pypi-publish:
+    name: publish distributions to PyPI
+    runs-on: ubuntu-latest
+    needs: release-build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_to_pypi
+    environment:
+      name: pypi
+      url: https://pypi.org/p/skycat
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.14.1
+        with:
+          print-hash: true

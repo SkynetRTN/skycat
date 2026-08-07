@@ -23,10 +23,10 @@ the repository before you move one, and if a note is archived with a caveat
 ("still needs an admin to…"), that caveat is an open item — the note is not
 archivable until it is closed or explicitly dropped.
 
-## Current state (audited 2026-08-06)
+## Current state (audited 2026-08-08)
 
 | Note | Status | Why |
 |---|---|---|
-| [package-publishing-report.md](package-publishing-report.md) | **open** | Repository side is done, but no tag or release exists, so the install-from-a-real-release-asset check has never run. |
+| [package-publishing-report.md](package-publishing-report.md) | **open** | The first GitHub Release is complete; PyPI/TestPyPI still needs Trusted Publishing setup, first uploads, rendering checks, and index install checks. |
 | [archive/design-review.md](archive/design-review.md) | archived | All 14 findings landed; the header table says where each one lives. |
 | [archive/github-workflow-recommendations.md](archive/github-workflow-recommendations.md) | archived | Recommendations 1–13 plus CODEOWNERS landed; the last open item, branch protection, is now live as the `Protect Main` and `Protect release tags` rulesets. |
