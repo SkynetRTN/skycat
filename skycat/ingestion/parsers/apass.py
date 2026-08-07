@@ -125,6 +125,19 @@ class ApassDr6Parser:
                     )
 
 
+def _is_dr10_header(first_token: str, *, first_line: bool) -> bool:
+    """Is this DR10 line the column header rather than a data row?
+
+    The header is ``APASS ID  ra  raerr …``. Recognised two ways because both
+    occur: it is the first line of a well-formed file, and it reappears at every
+    concatenation boundary when someone cats the per-declination files together.
+
+    ``str.isdigit()`` is not used — it accepts non-ASCII digits, which a DR10
+    identifier never is.
+    """
+    return first_token == "APASS" or (first_line and first_token[0] not in "0123456789")
+
+
 class ApassDr10Parser:
     columns = APASS_COLUMNS
     source_format = "apass_dr10_txt"
@@ -132,13 +145,20 @@ class ApassDr10Parser:
     def iter_rows(self, paths: Iterable[Path], stats: ParseStats) -> Iterator[tuple]:
         for path in paths:
             with open_text(path) as fh:
-                for line in fh:
-                    line = line.rstrip("\n")
+                for lineno, raw in enumerate(fh):
+                    line = raw.rstrip("\n")
                     if not line:
                         continue
                     f = line.split()
-                    if not f or not f[0][0].isdigit():
-                        continue  # header line (e.g. "APASS ID ...")
+                    if not f:
+                        continue
+                    if _is_dr10_header(f[0], first_line=lineno == 0):
+                        continue
+                    # Anything else non-numeric falls through to be *counted*.
+                    # The skip used to be "the first token does not start with a
+                    # digit", which is equally true of a truncated write or a
+                    # header concatenated mid-stream: those vanished without
+                    # appearing in parsed, in malformed, or in the rejects table.
                     if len(f) < 29:
                         stats.record_malformed(line)
                         continue
