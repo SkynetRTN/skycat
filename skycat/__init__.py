@@ -27,7 +27,7 @@ from .constants import (
 )
 from .database.base import CatalogBase, catalog_metadata
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "ALL_SCHEMAS",
