@@ -5,6 +5,12 @@ source-controlled summary that release notes should start from.
 
 ## Unreleased
 
+## 0.1.3 - 2026-08-08
+
+- Fixed PyPI/TestPyPI README documentation links by using absolute GitHub URLs.
+- Updated package-index installation notes to install the latest published
+  release without a version pin.
+
 ## 0.1.2 - 2026-08-07
 
 - Fixed PyPI/TestPyPI README logo rendering by using an absolute hosted logo URL.

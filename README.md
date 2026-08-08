@@ -4,16 +4,22 @@
 
 # Skycat
 
-Skycat is a standalone Python package and command-line tool for building and
+Skycat is a standalone Python package and command-line tool for building, managing and
 querying versioned local PostgreSQL/PostGIS databases from mirrored
 astronomical reference catalogs.
 
-It gives calibration, photometry, and observation-processing pipelines a local,
-reproducible catalog layer: import known catalog releases, validate them,
-activate the release that should serve by default, and query them without
-depending on a live external catalog service.
+It provides calibration, photometry, and observation-processing pipelines
+with a fast reproducible catalog layer that does not depend on the 
+availability or performance of external catalog services. Skycat can discover 
+and ingest known catalog releases, validate imported data, manage multiple
+versions of the same catalog, activate the release that should serve as the default,
+and retain older releases for reproducibility or comparison.
 
-## What Ships
+Its query interface supports spatial cone searches, catalog-native source lookups,
+magnitude and quality filtering, and efficient batch crossmatching using PostGIS spatial
+indexes. The overall goal is to provide astronomy software with a consistent, locally
+controlled source of catalog data for workflows that require reliable access to large
+astronomical reference catalogs. 
 
 Skycat installs:
 
@@ -42,24 +48,25 @@ Operators still provision the database and provide source data separately.
 From PyPI:
 
 ```bash
-python -m pip install skycat==0.1.2
+python -m pip install skycat
 ```
 
 From the GitHub Release wheel:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.2/skycat-0.1.2-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.3/skycat-0.1.3-py3-none-any.whl
 ```
 
 From a Git tag:
 
 ```bash
-python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.2"
+python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.3"
 ```
 
-See [docs/operations/release.md](docs/operations/release.md) for release,
-artifact, TestPyPI, and PyPI validation steps.
+See
+[docs/operations/release.md](https://github.com/SkynetRTN/skycat/blob/main/docs/operations/release.md)
+for release, artifact, TestPyPI, and PyPI validation steps.
 
 ## Quick Start
 
@@ -91,7 +98,8 @@ uv run skycat import apass dr6 --activate
 uv run skycat cone apass --ra 10.0 --dec 1.0 --radius-arcmin 5
 ```
 
-The operational details are in [docs/operations/runbook.md](docs/operations/runbook.md).
+The operational details are in
+[docs/operations/runbook.md](https://github.com/SkynetRTN/skycat/blob/main/docs/operations/runbook.md).
 
 ## CLI
 
@@ -148,8 +156,9 @@ Pass `order_by` whenever you also pass `limit`. Without it, cone results are
 nearest-first by angular separation, which is not the same as brightest-first in
 dense fields.
 
-See [docs/reference/api-stability.md](docs/reference/api-stability.md) for the
-stable API surface and compatibility policy.
+See
+[docs/reference/api-stability.md](https://github.com/SkynetRTN/skycat/blob/main/docs/reference/api-stability.md)
+for the stable API surface and compatibility policy.
 
 ## Release Model
 
@@ -163,8 +172,9 @@ ready, and activate only when explicitly requested. A failed import should not
 degrade the currently active release.
 
 The full architecture is documented in
-[docs/reference/architecture.md](docs/reference/architecture.md), and source
-data provenance is covered in [docs/guides/provenance.md](docs/guides/provenance.md).
+[docs/reference/architecture.md](https://github.com/SkynetRTN/skycat/blob/main/docs/reference/architecture.md),
+and source data provenance is covered in
+[docs/guides/provenance.md](https://github.com/SkynetRTN/skycat/blob/main/docs/guides/provenance.md).
 
 ## Configuration
 
@@ -207,13 +217,16 @@ uv run skycat health
 uv run pytest tests -q --require-postgis
 ```
 
-See [docs/operations/ci.md](docs/operations/ci.md) for the CI matrix and
-[docs/operations/runbook.md](docs/operations/runbook.md) for operational
-safety notes.
+See
+[docs/operations/ci.md](https://github.com/SkynetRTN/skycat/blob/main/docs/operations/ci.md)
+for the CI matrix and
+[docs/operations/runbook.md](https://github.com/SkynetRTN/skycat/blob/main/docs/operations/runbook.md)
+for operational safety notes.
 
 ## Adding a Catalog Family
 
-The implementation guide is [docs/guides/add-family.md](docs/guides/add-family.md).
+The implementation guide is
+[docs/guides/add-family.md](https://github.com/SkynetRTN/skycat/blob/main/docs/guides/add-family.md).
 The short checklist is:
 
 1. Add a `FamilyDef` / `ReleaseDef` in `skycat/registry/catalog_defs.py`.
@@ -227,15 +240,15 @@ The short checklist is:
 
 | Document | Use it for |
 |---|---|
-| [docs/reference/architecture.md](docs/reference/architecture.md) | Database model, release lifecycle, spatial representation, deployment shape. |
-| [docs/reference/api-stability.md](docs/reference/api-stability.md) | Stable Python, CLI, configuration, and database contracts. |
-| [docs/guides/add-family.md](docs/guides/add-family.md) | Worked guide for adding a new catalog family. |
-| [docs/guides/provenance.md](docs/guides/provenance.md) | Source mirroring and release provenance. |
-| [docs/operations/runbook.md](docs/operations/runbook.md) | Destructive-operation safety, incident checks, credential rotation. |
-| [docs/operations/performance.md](docs/operations/performance.md) | Query targets and tuning guidance. |
-| [docs/operations/ci.md](docs/operations/ci.md) | Required checks and workflow behavior. |
-| [docs/operations/release.md](docs/operations/release.md) | GitHub Releases, TestPyPI, and PyPI publishing. |
-| [docs/decisions/](docs/decisions/README.md) | Architecture decisions. |
+| [docs/reference/architecture.md](https://github.com/SkynetRTN/skycat/blob/main/docs/reference/architecture.md) | Database model, release lifecycle, spatial representation, deployment shape. |
+| [docs/reference/api-stability.md](https://github.com/SkynetRTN/skycat/blob/main/docs/reference/api-stability.md) | Stable Python, CLI, configuration, and database contracts. |
+| [docs/guides/add-family.md](https://github.com/SkynetRTN/skycat/blob/main/docs/guides/add-family.md) | Worked guide for adding a new catalog family. |
+| [docs/guides/provenance.md](https://github.com/SkynetRTN/skycat/blob/main/docs/guides/provenance.md) | Source mirroring and release provenance. |
+| [docs/operations/runbook.md](https://github.com/SkynetRTN/skycat/blob/main/docs/operations/runbook.md) | Destructive-operation safety, incident checks, credential rotation. |
+| [docs/operations/performance.md](https://github.com/SkynetRTN/skycat/blob/main/docs/operations/performance.md) | Query targets and tuning guidance. |
+| [docs/operations/ci.md](https://github.com/SkynetRTN/skycat/blob/main/docs/operations/ci.md) | Required checks and workflow behavior. |
+| [docs/operations/release.md](https://github.com/SkynetRTN/skycat/blob/main/docs/operations/release.md) | GitHub Releases, TestPyPI, and PyPI publishing. |
+| [docs/decisions/](https://github.com/SkynetRTN/skycat/tree/main/docs/decisions) | Architecture decisions. |
 
 Working notes live under `docs/working/`; they are snapshots of open work, not
 current API references.
@@ -243,4 +256,4 @@ current API references.
 ## License
 
 Skycat is licensed under the GNU General Public License v3.0. See
-[LICENSE](LICENSE).
+[LICENSE](https://github.com/SkynetRTN/skycat/blob/main/LICENSE).
