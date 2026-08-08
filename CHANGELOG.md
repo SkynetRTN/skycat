@@ -5,6 +5,12 @@ source-controlled summary that release notes should start from.
 
 ## Unreleased
 
+## 0.1.4 - 2026-08-08
+
+- Automated TestPyPI publishing and validation on release tag pushes.
+- Added a TestPyPI install and rendered-page preflight before manual PyPI
+  publishing.
+
 ## 0.1.3 - 2026-08-08
 
 - Fixed PyPI/TestPyPI README documentation links by using absolute GitHub URLs.

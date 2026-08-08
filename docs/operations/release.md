@@ -67,9 +67,11 @@ Do not rebuild artifacts in the publish job.
 ## PyPI/TestPyPI workflow
 
 The release workflow can also publish the tested `release-dists` artifact to
-TestPyPI and PyPI through Trusted Publishing. Package-index publishing is
-manual-dispatch only: pushing a `v*.*.*` tag still builds the artifacts and
-creates the draft GitHub Release, but it does not upload to PyPI or TestPyPI.
+TestPyPI and PyPI through Trusted Publishing. Pushing a `v*.*.*` tag builds the
+artifacts, creates the draft GitHub Release, publishes to TestPyPI, installs
+from TestPyPI, and checks the rendered TestPyPI project page. Real PyPI
+publishing remains manual-dispatch only and is gated by the protected `pypi`
+environment.
 
 Before the first package-index upload:
 
@@ -79,30 +81,32 @@ Before the first package-index upload:
   `SkynetRTN/skycat`, workflow `.github/workflows/release.yml`, and GitHub
   environments `testpypi` and `pypi`.
 - Create matching GitHub environments named `testpypi` and `pypi`; require
-  reviewer approval on `pypi`.
+  reviewer approval on `pypi`. Leave `testpypi` without required reviewers if
+  tag pushes should publish rehearsal uploads without a manual deployment
+  approval.
 - Keep `id-token: write` scoped to the package-index publish jobs only.
 
-First publish sequence:
+Normal publish sequence:
 
-1. Run the release workflow manually for the existing tag.
-2. Leave `publish_github_release` disabled unless the GitHub draft release also
-   needs to be created or refreshed.
-3. Enable `publish_to_testpypi` and approve the `testpypi` environment if it is
-   protected.
-4. Inspect the rendered TestPyPI project page.
-5. Install from TestPyPI in a clean environment.
-6. Run the release workflow manually again with `publish_to_pypi` enabled.
-7. Approve the `pypi` environment deployment.
-8. Install from PyPI in a clean environment.
+1. Merge the release branch through `dev` and protected `main`.
+2. Tag the protected `main` commit, for example `v0.1.4`.
+3. Let the tag-push workflow build once, publish to TestPyPI, run the TestPyPI
+   install smoke test, and check the rendered TestPyPI page.
+4. Inspect the TestPyPI workflow result and project page.
+5. Run the release workflow manually for the same tag with `publish_to_pypi`
+   enabled.
+6. Approve the `pypi` environment deployment. The PyPI job re-validates
+   TestPyPI before uploading the same tested `release-dists` artifact.
+7. Install from PyPI in a clean environment.
 
-TestPyPI install check:
+The automated TestPyPI install check uses this package-index shape:
 
 ```bash
 python -m venv /tmp/skycat-testpypi
 /tmp/skycat-testpypi/bin/python -m pip install \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  skycat==0.1.3
+  skycat==0.1.4
 /tmp/skycat-testpypi/bin/skycat --help
 ```
 
@@ -110,7 +114,7 @@ PyPI install check:
 
 ```bash
 python -m venv /tmp/skycat-pypi
-/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.3
+/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.4
 /tmp/skycat-pypi/bin/skycat --help
 ```
 
@@ -120,13 +124,13 @@ Direct wheel install from a GitHub Release:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.3/skycat-0.1.3-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.4/skycat-0.1.4-py3-none-any.whl
 ```
 
 Source install from a Git tag:
 
 ```bash
-python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.3"
+python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.4"
 ```
 
 Both forms install Skycat software only. They do not create or populate the

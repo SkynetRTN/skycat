@@ -13,7 +13,7 @@ require; the rest are advisory or path-filtered.
 | `kubernetes.yml` | `kubernetes manifests` | `infra/kubernetes/**` | advisory |
 | `codeql.yml` | `codeql python` | every PR, weekly | advisory |
 | `secret-scan.yml` | `secret scan` | every PR, push to `main` | advisory |
-| `release.yml` | `build release distributions`, `publish draft GitHub Release`, `publish distributions to TestPyPI`, `publish distributions to PyPI` | release tags, manual dispatch | release-only |
+| `release.yml` | `build release distributions`, `publish draft GitHub Release`, `publish distributions to TestPyPI`, `validate TestPyPI release`, `publish distributions to PyPI` | release tags, manual dispatch | release-only |
 
 ## Require the aggregates, not the jobs
 
@@ -100,11 +100,12 @@ schemas — are path-filtered and therefore stay advisory.
   published and still needs rotating.
 - **`release.yml`** is not a PR gate. It runs for `v*.*.*` tags or explicit
   manual dispatch, verifies the tag matches `pyproject.toml`, builds the wheel
-  and sdist once, checks package metadata with Twine, smoke-tests both install
-  paths, then attaches those exact artifacts to a draft GitHub Release from the
-  `github-release` environment. Manual dispatch can also upload the same tested
-  artifacts to TestPyPI or PyPI through Trusted Publishing; tag pushes do not
-  publish to package indexes.
+  and sdist once, checks package metadata with Twine, smoke-tests both local
+  install paths, then attaches those exact artifacts to a draft GitHub Release
+  from the `github-release` environment. Tag pushes also publish the tested
+  artifacts to TestPyPI and run a TestPyPI install/rendered-page validation.
+  Real PyPI uploads are still manual-dispatch only, and the PyPI job
+  re-validates TestPyPI before uploading.
 
 ## Action versions
 
@@ -220,8 +221,10 @@ The package-index publish jobs use GitHub environments named `testpypi` and
 jobs request only job-level `id-token: write`, download the tested
 `release-dists` artifact, and call `pypa/gh-action-pypi-publish@v1.14.1`.
 
-Protect `pypi` with required reviewer approval. `testpypi` may be protected too
-if the project wants the same manual gate for rehearsal uploads.
+Protect `pypi` with required reviewer approval. Leave `testpypi` without
+required reviewers if tag pushes should publish rehearsal uploads
+automatically; protect it too only if the project wants the same manual gate for
+TestPyPI uploads.
 
 ### CODEOWNERS
 
