@@ -4,16 +4,22 @@
 
 # Skycat
 
-Skycat is a standalone Python package and command-line tool for building and
+Skycat is a standalone Python package and command-line tool for building, managing and
 querying versioned local PostgreSQL/PostGIS databases from mirrored
 astronomical reference catalogs.
 
-It gives calibration, photometry, and observation-processing pipelines a local,
-reproducible catalog layer: import known catalog releases, validate them,
-activate the release that should serve by default, and query them without
-depending on a live external catalog service.
+It provides calibration, photometry, and observation-processing pipelines
+with a fast reproducible catalog layer that does not depend on the 
+availability or performance of external catalog services. Skycat can discover 
+and ingest known catalog releases, validate imported data, manage multiple
+versions of the same catalog, activate the release that should serve as the default,
+and retain older releases for reproducibility or comparison.
 
-## What Ships
+Its query interface supports spatial cone searches, catalog-native source lookups,
+magnitude and quality filtering, and efficient batch crossmatching using PostGIS spatial
+indexes. The overall goal is to provide astronomy software with a consistent, locally
+controlled source of catalog data for workflows that require reliable access to large
+astronomical reference catalogs. 
 
 Skycat installs:
 
