@@ -34,10 +34,10 @@ Alembic environment, schemas, database roles, and configuration namespace
 (`SKYCAT_DB_*`). It is intended to be used as an independent catalog-ingestion
 and query package, not as an add-on to a larger service.
 
-## Installation from GitHub Releases
+## Installation
 
-Skycat's near-term package distribution channel is GitHub Releases. After a
-release is cut, install the wheel directly from the release assets:
+Skycat's supported public package artifacts are currently attached to GitHub
+Releases. Install the wheel directly from the release assets:
 
 ```bash
 python -m pip install \
@@ -54,6 +54,10 @@ Replace `v0.1.0` with the release tag you intend to run. The installed package
 provides the `skycat` CLI, Python APIs, parsers, validators, and Alembic
 migrations. See [docs/operations/release.md](docs/operations/release.md) for the release process and
 artifact checks.
+
+PyPI and TestPyPI publishing are being prepared as package-index channels. Until
+the `skycat` project exists on PyPI, use the GitHub Release wheel or source-tag
+install paths above.
 
 ## Package scope
 
