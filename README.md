@@ -41,16 +41,16 @@ Releases. Install the wheel directly from the release assets:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.0/skycat-0.1.0-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.1/skycat-0.1.1-py3-none-any.whl
 ```
 
 For a source install from a tag:
 
 ```bash
-python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.0"
+python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.1"
 ```
 
-Replace `v0.1.0` with the release tag you intend to run. The installed package
+Replace `v0.1.1` with the release tag you intend to run. The installed package
 provides the `skycat` CLI, Python APIs, parsers, validators, and Alembic
 migrations. See [docs/operations/release.md](docs/operations/release.md) for the release process and
 artifact checks.

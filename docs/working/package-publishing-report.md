@@ -184,7 +184,7 @@ software, not a populated catalog query service.
 `pyproject.toml` currently declares:
 
 - `name = "skycat"`
-- `version = "0.1.0"`
+- `version = "0.1.1"`
 - `requires-python = ">=3.11, <3.14"`
 - `readme = "README.md"`
 - `authors = [{ name = "Skycat maintainers" }]`
@@ -207,7 +207,7 @@ software, not a populated catalog query service.
 - wheel target:
   - `packages = ["skycat"]`
 
-`skycat/__init__.py` also declares `__version__ = "0.1.0"`.
+`skycat/__init__.py` also declares `__version__ = "0.1.1"`.
 
 ### Existing runtime packaging concerns
 
@@ -413,8 +413,8 @@ Required actions before PyPI publishing:
 
 There are several version concepts in the repository:
 
-- Python package version: `pyproject.toml`, currently `0.1.0`.
-- Runtime `skycat.__version__`, currently `0.1.0`.
+- Python package version: `pyproject.toml`, currently `0.1.1`.
+- Runtime `skycat.__version__`, currently `0.1.1`.
 - Internal database schema version: `INTERNAL_SCHEMA_VERSION = 1`.
 - Importer semantic version: `IMPORTER_VERSION = "1.0.0"`.
 - Alembic migration revisions under `skycat/migrations/versions/`.
@@ -431,7 +431,7 @@ Current status and remaining actions:
   remain an independent data-provenance version.
 - Define when `INTERNAL_SCHEMA_VERSION` changes relative to Alembic migrations.
 - Define Docker tag rules, for example `ghcr.io/skynetrtn/skycat:<python-package-version>`.
-- Use immutable release tags such as `v0.1.0`.
+- Use immutable release tags such as `v0.1.1`.
 
 Practical recommendation:
 
@@ -571,11 +571,11 @@ Current GitHub-facing status:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.0/skycat-0.1.0-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.1/skycat-0.1.1-py3-none-any.whl
 ```
 
 ```bash
-python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.0"
+python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.1"
 ```
 
 Remaining PyPI-facing actions:
@@ -762,7 +762,7 @@ Users could install from a direct URL, for example:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.0/skycat-0.1.0-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.1/skycat-0.1.1-py3-none-any.whl
 ```
 
 Recommendation: keep GitHub Releases as the canonical release surface even
@@ -810,7 +810,7 @@ python -m venv /tmp/skycat-testpypi
 /tmp/skycat-testpypi/bin/python -m pip install \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  skycat==0.1.0
+  skycat==0.1.1
 /tmp/skycat-testpypi/bin/skycat --help
 ```
 
@@ -818,7 +818,7 @@ Example PyPI install check:
 
 ```bash
 python -m venv /tmp/skycat-pypi
-/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.0
+/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.1
 /tmp/skycat-pypi/bin/skycat --help
 ```
 
@@ -1018,7 +1018,7 @@ This is illustrative, not a patch.
 ```toml
 [project]
 name = "skycat"
-version = "0.1.0"
+version = "0.1.1"
 description = "Build and query versioned local PostgreSQL/PostGIS databases from astronomical reference catalogs."
 readme = "README.md"
 requires-python = ">=3.11, <3.14"
