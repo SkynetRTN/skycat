@@ -1,47 +1,45 @@
 ---
 status: open
 reviewed: 2026-08-08
-branch: dev
+branch: feature/pypi-release-readiness
 authority: code-inspection + official-docs
-implementation: github-releases-ready; pypi-not-started
+implementation: github-releases-complete; pypi-workflow-in-progress
 ---
 
 # Skycat package publishing report
 
-This report describes Skycat's package publishing framework now that GitHub
-Releases have been implemented and exercised as the first artifact host. The
-remaining publishing question is PyPI/TestPyPI readiness: what must be added so
-the same tested wheel and source distribution can be uploaded to a Python
-package index without weakening the GitHub Release process.
+This report describes Skycat's package publishing framework now that the first
+GitHub Release has been completed. The remaining publishing question is
+PyPI/TestPyPI readiness: what must be configured so the same tested wheel and
+source distribution can be uploaded to a Python package index without weakening
+the GitHub Release process.
 
 > **Status: open — this is the one package-publishing note with work still in
-> it.** The GitHub Releases side is implemented: `pyproject.toml` declares
-> `GPL-3.0-only` with `license-files`, `release.yml` builds and verifies the
-> wheel and sdist and publishes a draft through the protected `github-release`
-> environment, the `Protect release tags` ruleset guards the tag namespace,
-> `docs/operations/release.md` documents the process, and the README documents
-> both supported install paths.
+> it.** The GitHub Releases side is complete for the first public artifact
+> host: `pyproject.toml` declares `GPL-3.0-only` with `license-files`,
+> `release.yml` builds and verifies the wheel and sdist and publishes a draft
+> through the protected `github-release` environment, the `Protect release tags`
+> ruleset guards the tag namespace, `docs/operations/release.md` documents the
+> process, and the README documents the supported GitHub Release install paths.
 >
-> **What is actually left:** the GitHub Release dry run completed and was
-> deleted intentionally, but no official release has been cut. The remaining
-> GitHub-side work is to merge `dev` into protected `main`, tag the protected
-> `main` commit, approve the release deployment, and verify install from the
-> real release asset URL. The next package-index track is PyPI/TestPyPI:
-> name availability, Trusted Publishing, PyPI environments, README rendering,
-> and install checks.
+> **What is actually left:** the next package-index track is PyPI/TestPyPI:
+> Trusted Publishing, GitHub environments, README rendering, first TestPyPI
+> upload, TestPyPI install checks, first PyPI upload, and PyPI install checks.
+> Live `pip index versions skycat` probes on 2026-08-08 found no matching
+> distribution on PyPI or TestPyPI, but pending publishers do not reserve a
+> project name before first upload.
 
-The body below is now a current framework report. It remains a planning
-document: no packaging, metadata, workflow, or release-process changes are made
-by the report itself.
+The body below is a current framework report plus the implementation notes for
+the `feature/pypi-release-readiness` branch.
 
 ## Executive summary
 
-Skycat is packageable now under the GitHub Releases model. The repository has a
-draft-first release workflow, a protected `github-release` environment, package
-build and install checks, a GPLv3 license declaration, release documentation,
-and a completed first-release dry run. The next maturity step is not more
-GitHub Release scaffolding; it is preparing a PyPI/TestPyPI publishing lane that
-reuses the exact same tested artifacts.
+Skycat is packageable now under the GitHub Releases model, and the first GitHub
+Release has been completed. The repository has a draft-first release workflow, a
+protected `github-release` environment, package build and install checks, a
+GPLv3 license declaration, release documentation, and a working public artifact
+host. The next maturity step is the PyPI/TestPyPI publishing lane that reuses
+the exact same tested artifacts.
 
 The repository already has the core package shape:
 
@@ -57,30 +55,24 @@ The repository already has the core package shape:
   package-build smoke tests, Python-version matrix tests, migration graph
   checks, workflow safety, dependency review, and advisory supply-chain scans.
 
-The GitHub-hosted release path is ready for the first official release after
-the normal branch-promotion step:
+The GitHub-hosted release path is complete for the first public release:
 
 - GPLv3 license metadata is declared and the root `LICENSE` is included.
 - The protected `github-release` environment exists with required reviewer
   approval.
 - `release.yml` verifies tag/version alignment, builds wheel and sdist,
-  inspects archive contents, smoke-tests both install paths, and publishes a
-  draft GitHub Release from the tested artifacts.
-- The dry run completed successfully and was intentionally deleted afterward,
-  leaving no permanent release/tag from the test.
-- The current release process still expects `dev` to be promoted into the
-  protected `main` branch before the official `v0.1.0` tag is cut.
-- PyPI name reservation, TestPyPI upload, Trusted Publishing, and PyPI README
-  rendering are now the remaining package-index blockers.
+  checks metadata with Twine, inspects archive contents, smoke-tests both
+  install paths, and publishes a draft GitHub Release from the tested artifacts.
+- PyPI/TestPyPI Trusted Publishing setup, first index uploads, README rendering,
+  and install checks are now the remaining package-index blockers.
 
 Recommended path:
 
 1. Keep GitHub Releases as the canonical release-note, tag, and artifact
    surface.
-2. Promote `dev` to protected `main`, then cut the first official GitHub
-   Release from the protected `main` commit.
-3. Add a PyPI/TestPyPI publishing lane only after the GitHub Release artifact
-   path stays green.
+2. Merge the PyPI/TestPyPI workflow lane through `dev` and protected `main`.
+3. Configure the pending PyPI/TestPyPI publishers immediately before first
+   upload.
 4. Configure PyPI/TestPyPI Trusted Publishing with GitHub Actions OIDC instead
    of long-lived API tokens.
 5. Reuse the exact `release-dists` artifact built by `release-build`; do not
@@ -276,9 +268,8 @@ artifacts and publishes them to a draft GitHub Release.
 ### Release readiness already demonstrated
 
 The GitHub Release dry run demonstrated the release path end-to-end through a
-temporary `v0.1.0` tag and draft release. The dry-run tag and draft release were
-deleted intentionally after verification, so the repository is clean for the
-first official release.
+temporary `v0.1.0` tag and draft release, and the first official GitHub Release
+has now been completed.
 
 The current local and CI-equivalent checks have also shown:
 
@@ -289,11 +280,9 @@ The current local and CI-equivalent checks have also shown:
   checkout;
 - packaged Alembic migrations resolve to one head;
 - ruff, pyright, unit tests, package-build checks, workflow safety, and
-  dependency review are green on the merged `dev` work.
+  dependency review are green on the merged release work.
 
-The remaining official-release process step is repository policy, not package
-mechanics: merge `dev` into protected `main`, let the required checks pass
-there, then cut the official release tag from `main`.
+The remaining work is package-index publishing, not GitHub Release mechanics.
 
 ## Metadata requirements for GitHub Releases and PyPI
 
@@ -396,7 +385,7 @@ correctly omitted.
 
 Remaining PyPI-facing checks:
 
-- Run `twine check dist/*` against the current README and metadata before any
+- Run `twine check --strict dist/*` against the current README and metadata before any
   TestPyPI upload.
 - Review how the full-width README logo and repo-relative documentation links
   render outside GitHub.
@@ -475,8 +464,8 @@ For PyPI readiness, also keep the standards-based check visible:
 
 ```bash
 python -m pip install --upgrade build twine
-python -m build
-python -m twine check dist/*
+uv build
+uv run --frozen --extra dev twine check --strict dist/*
 ```
 
 The important rule for both GitHub Releases and PyPI is artifact identity:
@@ -524,8 +513,8 @@ Existing CI covers the install smoke test; this is the stronger local/release
 artifact check to keep available:
 
 ```bash
-python -m build
-python -m twine check dist/*
+uv build
+uv run --frozen --extra dev twine check --strict dist/*
 python -m venv /tmp/skycat-wheel-venv
 /tmp/skycat-wheel-venv/bin/python -m pip install dist/skycat-*.whl
 /tmp/skycat-wheel-venv/bin/python -c "import skycat; print(skycat.__version__)"
@@ -591,7 +580,7 @@ python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.0"
 
 Remaining PyPI-facing actions:
 
-- Run `twine check dist/*`; PyPA's guide identifies this as the pre-upload
+- Run `twine check --strict dist/*`; PyPA's guide identifies this as the pre-upload
   check for README rendering problems.
 - Upload to TestPyPI first and visually inspect the rendered project page.
 - If the logo breaks on PyPI, replace the relative image URL with an absolute
@@ -665,15 +654,18 @@ Remaining for PyPI:
 
 ### Current GitHub Release path
 
-The implemented release workflow has two jobs:
+The implemented release workflow has four jobs:
 
 - `release-build`
 - `github-release`
+- `testpypi-publish`
+- `pypi-publish`
 
 `release-build` checks out the exact version tag, installs `uv`, verifies the
-tag matches `pyproject.toml`, builds sdist and wheel, inspects archive contents,
-installs both distributions in clean environments, verifies the CLI, and checks
-that packaged Alembic migrations resolve.
+tag matches `pyproject.toml`, builds sdist and wheel, checks package metadata
+with Twine, inspects archive contents, installs both distributions in clean
+environments, verifies the CLI, and checks that packaged Alembic migrations
+resolve.
 
 `github-release` depends on `release-build`, runs in the protected
 `github-release` environment, downloads the `release-dists` artifact, and
@@ -682,15 +674,14 @@ publishes a draft GitHub Release with the tested wheel and sdist.
 GitHub Releases remain the canonical release-note and artifact surface. GitHub's
 own release model is tag-based: a release is attached to a Git tag that marks a
 specific point in repository history. That matches Skycat's versioning rule:
-the official `v0.1.0` tag should be cut from the protected `main` commit after
-`dev` is merged.
+future release tags should be cut from protected `main` after `dev` is merged.
 
-Per release:
+For future GitHub Releases:
 
 1. Confirm `dev` is ready.
 2. Merge `dev` into protected `main`.
 3. Confirm required `main` checks are green.
-4. Tag the protected `main` commit, for example `v0.1.0`.
+4. Tag the protected `main` commit, for example `v0.1.1`.
 5. Let `release.yml` create the draft GitHub Release.
 6. Approve the `github-release` deployment.
 7. Install from the real GitHub Release wheel asset URL:
@@ -698,7 +689,7 @@ Per release:
 ```bash
 python -m venv /tmp/skycat-github-release
 /tmp/skycat-github-release/bin/python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.0/skycat-0.1.0-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.1/skycat-0.1.1-py3-none-any.whl
 /tmp/skycat-github-release/bin/skycat --help
 ```
 
@@ -708,17 +699,17 @@ PyPI should be added as a publishing job, not as a replacement for GitHub
 Releases. The PyPI job should download the same `release-dists` artifact and
 upload it using Trusted Publishing through `pypa/gh-action-pypi-publish`.
 
-Recommended structure:
+Implemented structure on `feature/pypi-release-readiness`:
 
 - Keep `release-build` as the single build/test source.
 - Keep `github-release` as the draft GitHub Release publisher.
-- Add `testpypi-publish` first, gated by a `testpypi` environment.
-- Add `pypi-publish` later, gated by a stricter `pypi` environment.
+- Add `testpypi-publish`, gated by a `testpypi` environment.
+- Add `pypi-publish`, gated by a stricter `pypi` environment.
 - Give PyPI jobs `id-token: write` at the job level only.
 - Do not give the build or GitHub Release job OIDC publishing permission.
 - Use TestPyPI before real PyPI for the first upload.
 
-Illustrative job shape:
+Implemented job shape:
 
 ```yaml
 jobs:
@@ -737,7 +728,7 @@ jobs:
           path: dist/
 
       - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@v1.14.1
         with:
           repository-url: https://test.pypi.org/legacy/
 ```
@@ -781,8 +772,8 @@ back to.
 
 ### Option A2: PyPI and TestPyPI
 
-PyPI should be the next package-index target, after the first official GitHub
-Release path is stable.
+PyPI is the next package-index target now that the first GitHub Release path is
+stable.
 
 What it provides:
 
@@ -799,7 +790,7 @@ What it requires:
 - GitHub environments such as `testpypi` and `pypi`;
 - a publishing job that downloads the tested `release-dists` artifact;
 - job-level `id-token: write` for Trusted Publishing;
-- `twine check dist/*`;
+- `twine check --strict dist/*`;
 - TestPyPI upload and install smoke test before real PyPI.
 
 Recommendation: add PyPI as a second publish destination after GitHub Releases,
@@ -970,31 +961,29 @@ wheel/sdist contents, artifact tests, versioning, and release automation.
 - Dependency review.
 - Advisory container build, Compose config, container scan, Kubernetes manifest
   validation, CodeQL, and secret scanning.
-- First GitHub Release dry run completed successfully, then the dry-run release
-  and tag were deleted intentionally.
+- First official GitHub Release completed.
 - Brand-ready README introduction and primary logo placement.
 
-### Remaining before first official GitHub Release
+### PyPI/TestPyPI implemented in this feature branch
 
-- Merge `dev` into protected `main`.
-- Confirm required `main` checks are green.
-- Cut the official `v0.1.0` tag from the protected `main` commit.
-- Approve the `github-release` environment deployment.
-- Verify GitHub Release install instructions work from the real release asset
-  URL after the draft release is created.
+- `twine >= 6.0` is part of the `dev` extra and lockfile.
+- CI package-build runs `twine check --strict dist/*`.
+- Release build runs `twine check --strict dist/*`.
+- `release.yml` has manual-dispatch `testpypi-publish` and `pypi-publish`
+  jobs that download `release-dists` and do not rebuild artifacts.
+- Only the PyPI/TestPyPI jobs receive job-level `id-token: write`.
+- Release and CI docs explain the required Trusted Publisher and GitHub
+  environment setup.
 
-### Blocking before PyPI/TestPyPI release
+### Blocking before PyPI/TestPyPI upload
 
-- Confirm package name availability on PyPI and TestPyPI.
+- Reconfirm package name availability on PyPI and TestPyPI immediately before
+  first upload.
 - Decide whether to use a personal PyPI account or PyPI organization/project
   ownership for Skycat.
 - Configure pending Trusted Publishers for TestPyPI and PyPI as close as
   possible to first upload.
 - Add protected GitHub environments for `testpypi` and `pypi`.
-- Add `testpypi-publish` and `pypi-publish` jobs that download `release-dists`
-  and do not rebuild artifacts.
-- Give only the PyPI/TestPyPI jobs job-level `id-token: write`.
-- Verify `twine check dist/*` passes.
 - Verify the README renders correctly on TestPyPI/PyPI, especially the logo and
   repo-relative links.
 - Use TestPyPI before real PyPI.
@@ -1070,7 +1059,6 @@ dev = [
     "pytest >= 8.0",
     "ruff >= 0.7.0",
     "pyright >= 1.1.380",
-    "build >= 1.2",
     "twine >= 6.0",
 ]
 

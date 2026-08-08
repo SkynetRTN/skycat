@@ -23,7 +23,7 @@ the repository before you move one, and if a note is archived with a caveat
 ("still needs an admin to…"), that caveat is an open item — the note is not
 archivable until it is closed or explicitly dropped.
 
-## Current state (audited 2026-08-06)
+## Current state (audited 2026-08-08)
 
 | Note | Status | Why |
 |---|---|---|

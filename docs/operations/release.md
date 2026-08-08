@@ -1,15 +1,15 @@
 # Release process
 
-Skycat's near-term package distribution channel is GitHub Releases. PyPI and
-conda-forge are later channels after the package boundary, license, and release
-process have been exercised with GitHub-hosted artifacts.
+Skycat's canonical release surface is GitHub Releases. PyPI and TestPyPI are
+package-index publishing destinations that reuse the same built and tested
+wheel and source distribution.
 
 Skycat release artifacts are licensed as `GPL-3.0-only`; the root `LICENSE`
 file and `pyproject.toml` license metadata must stay synchronized.
 
 ## Release contract
 
-A GitHub-hosted Skycat package release ships:
+A Skycat package release ships:
 
 - the Python package and console script;
 - SQLAlchemy models and query APIs;
@@ -54,14 +54,65 @@ Releases are draft-first. The workflow should:
 1. Run from a `v*.*.*` tag.
 2. Check that the tag matches the Python package version.
 3. Build the wheel and source distribution once.
-4. Install the wheel into a clean environment.
-5. Install the source distribution into a clean environment.
-6. Verify the installed CLI runs.
-7. Verify packaged Alembic migrations resolve to one head.
-8. Upload the tested files as workflow artifacts.
-9. Attach those exact files to a draft GitHub Release.
+4. Verify the package metadata and README with `twine check --strict`.
+5. Install the wheel into a clean environment.
+6. Install the source distribution into a clean environment.
+7. Verify the installed CLI runs.
+8. Verify packaged Alembic migrations resolve to one head.
+9. Upload the tested files as workflow artifacts.
+10. Attach those exact files to a draft GitHub Release.
 
 Do not rebuild artifacts in the publish job.
+
+## PyPI/TestPyPI workflow
+
+The release workflow can also publish the tested `release-dists` artifact to
+TestPyPI and PyPI through Trusted Publishing. Package-index publishing is
+manual-dispatch only: pushing a `v*.*.*` tag still builds the artifacts and
+creates the draft GitHub Release, but it does not upload to PyPI or TestPyPI.
+
+Before the first package-index upload:
+
+- Confirm the normalized `skycat` project name is still available on PyPI and
+  TestPyPI.
+- Configure pending Trusted Publishers on both indexes for
+  `SkynetRTN/skycat`, workflow `.github/workflows/release.yml`, and GitHub
+  environments `testpypi` and `pypi`.
+- Create matching GitHub environments named `testpypi` and `pypi`; require
+  reviewer approval on `pypi`.
+- Keep `id-token: write` scoped to the package-index publish jobs only.
+
+First publish sequence:
+
+1. Run the release workflow manually for the existing tag.
+2. Leave `publish_github_release` disabled unless the GitHub draft release also
+   needs to be created or refreshed.
+3. Enable `publish_to_testpypi` and approve the `testpypi` environment if it is
+   protected.
+4. Inspect the rendered TestPyPI project page.
+5. Install from TestPyPI in a clean environment.
+6. Run the release workflow manually again with `publish_to_pypi` enabled.
+7. Approve the `pypi` environment deployment.
+8. Install from PyPI in a clean environment.
+
+TestPyPI install check:
+
+```bash
+python -m venv /tmp/skycat-testpypi
+/tmp/skycat-testpypi/bin/python -m pip install \
+  --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple/ \
+  skycat==0.1.0
+/tmp/skycat-testpypi/bin/skycat --help
+```
+
+PyPI install check:
+
+```bash
+python -m venv /tmp/skycat-pypi
+/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.0
+/tmp/skycat-pypi/bin/skycat --help
+```
 
 ## Install examples
 
@@ -81,6 +132,12 @@ python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.0"
 Both forms install Skycat software only. They do not create or populate the
 catalog database.
 
+After PyPI publishing is complete, the package-index install form is:
+
+```bash
+python -m pip install skycat==0.1.0
+```
+
 ## Pre-release checklist
 
 - `git status` is clean.
@@ -89,8 +146,11 @@ catalog database.
 - CI is green on `dev` and on the release tag.
 - The wheel installs cleanly in a fresh environment.
 - The source distribution installs cleanly in a fresh environment.
+- `twine check --strict dist/*` passes for the built distributions.
 - The installed `skycat` CLI runs without a repository checkout.
 - Packaged Alembic migrations resolve to exactly one head.
 - GitHub Release notes call out any migration, importer, or operational
   compatibility changes.
 - The package-scope statement is still accurate.
+- For PyPI/TestPyPI publishing, Trusted Publishers and GitHub environments
+  match the workflow file and environment names exactly.
