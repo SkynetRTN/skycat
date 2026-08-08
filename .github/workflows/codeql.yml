@@ -1,0 +1,49 @@
+name: CodeQL
+
+# Ingestion parses multi-gigabyte files from external providers and the CLI
+# builds SQL from operator input. Ruff's rule set here is deliberately narrow
+# (pyflakes plus a bare-except sweep) and does not look for either class of bug.
+#
+# Needs GitHub code scanning: free on public repositories, GHAS-only on private
+# ones. Skycat is public, so this runs at no cost. If it ever goes private
+# without GHAS, delete this workflow rather than leaving a permanently red
+# check.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  codeql-python:
+    name: codeql python
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          queries: security-and-quality
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:python"

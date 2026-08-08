@@ -1,11 +1,26 @@
+<p align="center">
+  <img src="brand/skycat_logo.png" alt="Skycat logo" width="100%">
+</p>
+
 # Skycat
 
-A **standalone** package for building and querying versioned local
-PostgreSQL/PostGIS databases from VizieR/CDS-style astronomical reference
-catalogs. Skycat ships support for APASS DR6, APASS DR10, VSX, Landolt
-(1992 + 2009), and Stetson globular-cluster standards, plus an extension pattern
-for future families such as Pan-STARRS, 2MASS, UCAC5, Tycho-2, SkyMapper, and
-USNO-B1.0.
+Skycat is a **standalone Python package and command-line tool** for turning
+mirrored astronomical reference catalogs into versioned, queryable local
+PostgreSQL/PostGIS databases.
+
+Its purpose is to give calibration, photometry, and observation-processing
+pipelines a reproducible catalog layer: import known catalog releases, validate
+them, activate the release that should serve by default, and query them locally
+without depending on a live external catalog service.
+
+Skycat is intentionally bounded. It owns the catalog database schema,
+migrations, ingestion workflow, query API, and CLI. It does not try to be a
+hosted catalog service, a data mirror, or a replacement for PostgreSQL/PostGIS.
+
+Skycat currently ships support for APASS DR6, APASS DR10, VSX, Landolt
+(1992 + 2009), and Stetson globular-cluster standards, plus an extension
+pattern for future families such as Pan-STARRS, 2MASS, UCAC5, Tycho-2,
+SkyMapper, and USNO-B1.0.
 
 | Family | Releases | Source (CDS) | Parser format | Rows | Provider |
 |--------|----------|--------------|---------------|------|----------|
@@ -18,6 +33,64 @@ It has its own SQLAlchemy declarative base, metadata, engine/session factory,
 Alembic environment, schemas, database roles, and configuration namespace
 (`SKYCAT_DB_*`). It is intended to be used as an independent catalog-ingestion
 and query package, not as an add-on to a larger service.
+
+## Installation from GitHub Releases
+
+Skycat's near-term package distribution channel is GitHub Releases. After a
+release is cut, install the wheel directly from the release assets:
+
+```bash
+python -m pip install \
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.0/skycat-0.1.0-py3-none-any.whl
+```
+
+For a source install from a tag:
+
+```bash
+python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.0"
+```
+
+Replace `v0.1.0` with the release tag you intend to run. The installed package
+provides the `skycat` CLI, Python APIs, parsers, validators, and Alembic
+migrations. See [docs/operations/release.md](docs/operations/release.md) for the release process and
+artifact checks.
+
+## Package scope
+
+Installing Skycat installs the control/query software only. It does **not**
+install PostgreSQL, PostGIS, catalog source files, imported catalog rows,
+production roles, storage, backups, credentials, or a hosted query endpoint.
+
+To run a working catalog service, provision PostgreSQL/PostGIS, initialize and
+migrate the catalog database, provide source data under `SKYCAT_DATA_ROOT`,
+import releases, validate them, and activate the release each family should
+serve by default.
+
+## License
+
+Skycat is licensed under the GNU General Public License v3.0. See
+[LICENSE](LICENSE).
+
+## Documentation
+
+This README is the package guide. The rest is in [`docs/`](docs/README.md),
+grouped by the question you arrived with:
+
+| Document | Read it when |
+|---|---|
+| [docs/reference/architecture.md](docs/reference/architecture.md) | You want the whole design in one pass: schemas, release model, spatial model, ingestion, deployment. |
+| [docs/reference/api-stability.md](docs/reference/api-stability.md) | You are building against Skycat and need to know what will not move under you. |
+| [docs/guides/add-family.md](docs/guides/add-family.md) | You are adding a catalog family — the worked version of the checklist below. |
+| [docs/guides/provenance.md](docs/guides/provenance.md) | You are mirroring source data, or need to prove a release matches an upstream snapshot. |
+| [docs/operations/runbook.md](docs/operations/runbook.md) | You are about to run something destructive, watching a long import, or rotating credentials. |
+| [docs/operations/performance.md](docs/operations/performance.md) | A query got slow, or you want targets to measure against. |
+| [docs/operations/ci.md](docs/operations/ci.md) | A required check failed, or you are changing a workflow. |
+| [docs/operations/release.md](docs/operations/release.md) | You are cutting a package release. |
+| [docs/decisions/](docs/decisions/README.md) | You are about to propose something the project already decided against. |
+
+`docs/working/` holds dated planning notes. They are snapshots of open work, not
+descriptions of the current API, and are deliberately excluded from the
+documentation tests.
 
 ---
 
@@ -227,7 +300,7 @@ export SKYCAT_DATA_ROOT=/srv/agents/catalogs
 uv run skycat health
 uv run skycat discover
 uv run skycat import apass dr6 --activate
-uv run skycat cone apass --ra 10 --dec 1 --radius-arcmin 5 --json
+uv run skycat --json cone apass --ra 10 --dec 1 --radius-arcmin 5
 ```
 
 ---
@@ -355,7 +428,8 @@ production → mark READY → (explicit) ATTACH+ACTIVATE → record completion`.
   without `--allow-warnings`. This is the guard against a truncated download: a
   short read of a multi-GB catalog still parses cleanly.
 
-See [docs](docs) and the module docstrings for details.
+For watching a long import, the structured event log, and what to do when one
+fails, see [docs/operations/runbook.md](docs/operations/runbook.md).
 
 ---
 
@@ -388,6 +462,10 @@ bad import should never degrade default query results.
 Six touch points, each small and each in the obviously-named place. There is
 deliberately **no** plugin descriptor or registration framework — the cost of a
 new family is low enough that indirection would cost more than it saves.
+
+This is the checklist. [docs/guides/add-family.md](docs/guides/add-family.md) is the worked
+version — what each file must contain, what the ingestion engine requires of it,
+the validation-level choice, and a review checklist. Read it before starting.
 
 Using Tycho-2 as the worked example:
 
@@ -438,6 +516,12 @@ generic.
 - Import commands print target host/port/db/catalog/release/source before
   loading.
 
+The guards prevent the wrong *target*; they cannot tell you that you picked the
+wrong *command*. [docs/operations/runbook.md](docs/operations/runbook.md) has the table
+comparing what `clean-staging`, `remove-release`, `import --replace`, `reset`,
+and `docker volume rm` each destroy — including the two that quietly delete
+diagnostic evidence.
+
 ---
 
 ## Testing
@@ -480,6 +564,28 @@ Integration tests (marker `postgis`) use a real PostgreSQL/PostGIS database
 or spatial indexes. They are **skipped automatically** when no catalog DB is
 reachable — so an unset `SKYCAT_DB_*` gives you the unit suite, not a failure.
 
+### Release validation: `--require-postgis`
+
+That default is right for casual runs and wrong before a release. A green suite
+proves nothing about migrations, roles, COPY, partitions, or spatial indexes if
+every test that touches them was quietly skipped, and a skip looks like a pass
+in every summary line.
+
+```bash
+uv run skycat health                          # preflight: names what is missing
+uv run pytest tests -q -m postgis             # the integration tests alone
+uv run pytest tests -q --require-postgis      # everything; unreachable DB = failure
+```
+
+`--require-postgis` (or `SKYCAT_REQUIRE_POSTGIS=1`) turns an unreachable
+database into a hard error before collection instead of 57 skips. It is what CI
+runs, so the deep gate cannot silently become a unit run. Combining it with
+`-m "not postgis"` is not a contradiction — deselecting the integration tests is
+an explicit choice, and the flag stays quiet.
+
+Run it before tagging a release, after any migration, and after anything that
+touches ingestion or the query path.
+
 ---
 
 ## Kubernetes & production
@@ -520,3 +626,71 @@ brightest) is the expected behavior.
 The underlying functions (`cone_search`, `lookup_native_id`, `batch_crossmatch`)
 remain available and accept a caller-managed `engine=`, but `CatalogReader` is
 the supported entry point.
+
+### Reader lifecycle
+
+A `CatalogReader` owns a connection pool. How long you hold one is the decision
+that matters — the engine is created lazily on first query, so constructing one
+never needs the database to be up, but disposing one throws away the pool.
+
+**Process scope (a web app, a worker).** One reader for the process lifetime,
+created at startup, never closed until shutdown. This is the intended shape: the
+pool is reused, the active release is cached, and a query is one round trip.
+
+```python
+from skycat import CatalogReader
+
+reader = CatalogReader.from_env()      # module scope; no connection made yet
+
+def handler(ra, dec):
+    return reader.cone("apass", ra, dec, radius_arcmin=5,
+                       order_by="johnson_v_mag", limit=100)
+```
+
+Constructing a reader per request is the mistake to avoid: it builds and
+discards a pool every time, and re-resolves the active release on every call.
+
+**Short-lived script.** Use the context manager so the pool is disposed on the
+way out.
+
+```python
+with CatalogReader.from_env() as reader:
+    for target in targets:
+        print(target, reader.crossmatch("vsx", [target], radius_arcsec=5))
+```
+
+Equivalent to `try: ... finally: reader.close()`. A script that exits without
+closing is fine in practice — the process is going away — but leaves the
+connections to be reaped by the server rather than returned.
+
+**After activating a release.** The active release is cached for 60 seconds
+(`DEFAULT_RELEASE_CACHE_TTL_S`), which is right for a hot path and wrong
+immediately after you have deliberately changed which release is active. Force
+it:
+
+```python
+reader.invalidate("apass")            # one family
+reader.invalidate()                   # all of them
+```
+
+Nothing else needs to be rebuilt — the pool and the engine are unaffected.
+
+**Explicit releases bypass the cache** entirely, because they are an operations
+and parity path rather than a hot one:
+
+```python
+current = reader.cone("landolt", ra, dec, radius_arcmin=10)                  # active
+mirror  = reader.cone("landolt", ra, dec, radius_arcmin=10, release="1992")  # explicit
+```
+
+**Tuning.** The constructor takes `statement_timeout_ms` (default 30s — set
+`None` for no timeout), `release_cache_ttl_s`, `pool_size`, and `max_overflow`.
+An explicitly configured `SKYCAT_DB_STATEMENT_TIMEOUT` always wins over the
+default.
+
+```python
+reader = CatalogReader.from_env(statement_timeout_ms=120_000, pool_size=20)
+```
+
+A reader is thread-safe: engine creation and the release cache are both guarded,
+and the pool is shared. Sharing one across threads is the intended use.

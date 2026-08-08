@@ -4,10 +4,17 @@ Unit tests run anywhere. PostGIS integration tests (marker ``postgis``) require 
 reachable catalog database, configured via the standard ``SKYCAT_DB_*``
 environment (e.g. the Compose `skycat-postgres` on 127.0.0.1:5433). They are
 skipped automatically when no catalog DB is reachable.
+
+That default is right for casual runs and wrong for release validation: a green
+suite proves nothing about migrations, roles, COPY, partitions, or spatial
+indexes if every test that touches them was quietly skipped. Pass
+``--require-postgis`` (or set ``SKYCAT_REQUIRE_POSTGIS=1``) to make an
+unreachable database a hard error instead — see README "Testing".
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -17,6 +24,58 @@ from skycat.config import CatalogRole, CatalogSettings
 from skycat.database.engine import create_catalog_engine
 
 DATA_DIR = Path(__file__).parent / "data"
+
+REQUIRE_POSTGIS_ENV = "SKYCAT_REQUIRE_POSTGIS"
+
+_UNREACHABLE = (
+    "no reachable catalog PostGIS database — point SKYCAT_DB_* at a THROWAWAY "
+    "PostGIS (see README > Testing). Never a provisioned catalog store: the "
+    "`imported` fixture replaces every release with six-row samples."
+)
+
+
+def pytest_addoption(parser) -> None:
+    parser.addoption(
+        "--require-postgis",
+        action="store_true",
+        default=False,
+        help=(
+            "Fail instead of skipping when no catalog PostGIS database is "
+            "reachable. Use for release validation, where a silently "
+            "degraded unit-only run is indistinguishable from a passing one."
+        ),
+    )
+
+
+def _required(config) -> bool:
+    return bool(config.getoption("--require-postgis")) or os.environ.get(
+        REQUIRE_POSTGIS_ENV, ""
+    ).lower() in ("1", "true", "yes")
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items) -> None:
+    """Fail the whole run up front rather than per test.
+
+    The failure mode this guards against is environmental, not per-test: one
+    clear message beats the same connection error repeated across every
+    integration test.
+
+    ``trylast`` so ``-m``/``-k`` deselection has already run: asking for
+    ``-m "not postgis" --require-postgis`` is not a contradiction, it is a unit
+    run that happens to have the flag set in the environment.
+    """
+    if not _required(config):
+        return
+    if not any(item.get_closest_marker("postgis") for item in items):
+        return
+    if _reachable(CatalogSettings.from_env()):
+        return
+    raise pytest.UsageError(
+        f"--require-postgis was given but {_UNREACHABLE}\n"
+        "Run `skycat health` against the same SKYCAT_DB_* environment to see "
+        "which part of the connection contract is missing."
+    )
 
 
 def _reachable(settings: CatalogSettings) -> bool:
@@ -58,14 +117,13 @@ def fixture_data_root(tmp_path_factory) -> Path:
 
 
 @pytest.fixture(scope="session")
-def pg(settings) -> CatalogSettings:
+def pg(request, settings) -> CatalogSettings:
     if not _reachable(settings):
-        pytest.skip(
-            "no reachable catalog PostGIS database — point SKYCAT_DB_* at a "
-            "THROWAWAY PostGIS (see README > Testing). Never a provisioned "
-            "catalog store: the `imported` fixture replaces every release with "
-            "six-row samples."
-        )
+        # --require-postgis already aborted collection; this is the ordinary
+        # path, where skipping is the documented behaviour.
+        if _required(request.config):
+            pytest.fail(_UNREACHABLE, pytrace=False)
+        pytest.skip(_UNREACHABLE)
     return settings
 
 

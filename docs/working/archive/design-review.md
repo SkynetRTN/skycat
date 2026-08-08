@@ -1,6 +1,7 @@
 ---
-status: working
+status: addressed
 reviewed: 2026-08-06
+addressed: 2026-08-06
 authority: code-inspection
 ---
 
@@ -9,6 +10,42 @@ authority: code-inspection
 This note reviews the current standalone Skycat package after extraction from
 the larger repository. It is intentionally a working document: it names holes,
 risks, and follow-up improvements rather than restating the stable design.
+
+> **Status: addressed (2026-08-06).** Every item below has landed. The findings
+> are kept verbatim as the record of what was wrong; the table says where each
+> one now lives. Two items were resolved differently from the suggestion, and
+> one arrived from another branch — both noted.
+>
+> | # | Item | Where it landed |
+> |---|---|---|
+> | H1 | PostGIS coverage hard to miss | `--require-postgis` (+ `SKYCAT_REQUIRE_POSTGIS`) in `tests/conftest.py`; CI runs it; README "Release validation" |
+> | H2 | Tighten type checking | `database/orm.require_row`, `database/engine.driver_connection`, `Mapped[str]` on registry enum columns; null-safety pyright rules promoted to **error** at zero |
+> | H3 | Public stability contract | `docs/reference/api-stability.md` |
+> | H4 | New-family developer guide | `docs/guides/add-family.md` |
+> | H5 | Source-data provenance | `docs/guides/provenance.md` |
+> | M1 | Destructive-command ambiguity | `docs/operations/runbook.md` — one table, plus the two commands that delete diagnostic evidence |
+> | M2 | Publishing and versioning | `docs/operations/release.md` + `CHANGELOG.md`, landed on `dev` separately |
+> | M3 | Measurable query performance | `docs/operations/performance.md` — targets, conditions, measurement procedure |
+> | M4 | Ingestion observability | structured `skycat.ingestion` events at every phase boundary; `docs/operations/runbook.md` documents the fields and how to watch a running import |
+> | M5 | Generated artifacts | `.gitignore` extended (source-mirror leftovers, coverage, editor/OS, `catalogs/`) |
+> | L1 | PostgreSQL/PostGIS-only ADR | `docs/decisions/0001-postgresql-postgis-only.md` |
+> | L2 | Schema diagram | `docs/reference/architecture.md` — ER map + release-lifecycle state diagram |
+> | L3 | Reader lifecycle examples | README "Reader lifecycle" |
+> | L4 | Credential rotation | `docs/operations/runbook.md` |
+>
+> **Deviations.** H1 suggested a `make test-postgis` target; a Makefile was not
+> added, because `uv` is the project's only entry point and a second one would
+> drift. H2 suggested promoting the noisy categories one at a time; the
+> null-safety family was promoted together (they share one fix and all reached
+> zero together), while the categories that fire on SQLAlchemy generics stay
+> warnings with the reasoning recorded in `pyproject.toml`.
+>
+> **Found while implementing**, outside the review's scope but fixed here:
+> `docs/design/skycat-design` had been moved twice and pointed one level above
+> the repository root the whole time (that file has since been merged into
+> `docs/reference/architecture.md`), and the README documented
+> `skycat cone … --json`, which Click rejects because `--json` is a group
+> option. `tests/test_docs.py` now has a test for each.
 
 ## Summary
 

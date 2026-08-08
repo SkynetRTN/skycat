@@ -5,21 +5,34 @@
 # Local catalog data / staging / generated artifacts
 catalog-data/
 catalog-work/
+catalogs/
 work/
 staging/
 manifests/
 rejected/
 checkpoints/
 *.manifest.json
+# `skycat --json discover > inventory-<date>.json` (docs/guides/provenance.md)
+inventory-*.json
+
+# Source-mirror leftovers. docs/guides/provenance.md mirrors CDS with wget, which
+# leaves these behind when --reject misses one.
+index.html
+index.html.*
+.listing
+wget-log
+wget-log.*
 
 # PostgreSQL dumps + bulk export intermediates
 *.dump
 *.sql.gz
 *.copy
 *.bin
+pgdata/
 
 # Local dev env files
 .env
+.env.local
 .env.secrets
 
 # Python build/test
@@ -29,8 +42,17 @@ dist/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 __pycache__/
+*.py[cod]
 .coverage
+.coverage.*
+htmlcov/
+
+# Editor / OS. SKYCAT_DATA_ROOT is routinely a macOS path (README), so a
+# .DS_Store landing in a mirrored source directory is not hypothetical.
+.DS_Store
+*.swp
 
 # Catalog source datasets accidentally placed under tests/data (only the small
 # committed fixtures *_sample.* are allowed).

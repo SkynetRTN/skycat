@@ -1,0 +1,131 @@
+name: Containers
+
+# Kubernetes Jobs and the local Compose stack both run Skycat through an image,
+# so a Dockerfile regression breaks operations while every Python test still
+# passes. Path-filtered and advisory by default — see docs/operations/ci.md before making
+# any of these a required check.
+
+on:
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "skycat/**"
+      - "infra/docker/**"
+      - ".github/workflows/containers.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "skycat/**"
+      - "infra/docker/**"
+      - ".github/workflows/containers.yml"
+  schedule:
+    # Weekly, so base-image CVEs surface without a code change to trigger them.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: containers-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  docker-build:
+    name: docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Build the runtime image
+        # No push, no registry credentials: this proves the image builds and
+        # that `uv sync --frozen --no-dev` still resolves inside it.
+        run: docker build --tag skycat:ci --file Dockerfile .
+
+      - name: Verify the CLI runs in the image
+        # `config` needs no database — it resolves and redacts settings only.
+        run: |
+          docker run --rm skycat:ci --help
+          docker run --rm skycat:ci config
+
+      - name: Build the local PostGIS image
+        # Compose builds this with `infra/docker` as its context.
+        run: |
+          docker build \
+            --tag skycat-postgres:ci \
+            --file infra/docker/skycat-postgresql.dockerfile \
+            infra/docker
+
+      - name: Export the runtime image for scanning
+        run: docker save skycat:ci -o /tmp/skycat-image.tar
+
+      - name: Upload the runtime image
+        uses: actions/upload-artifact@v7
+        with:
+          name: skycat-image
+          path: /tmp/skycat-image.tar
+          retention-days: 1
+
+  compose-config:
+    name: compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Validate the Compose file renders
+        # Interpolation, build contexts, service names, and profiles. The README
+        # and the documented local test workflow depend on all four. `.env` and
+        # `.env.secrets` are declared optional, so an unconfigured checkout is
+        # the case under test.
+        run: |
+          docker compose -f infra/docker/compose.yaml config --quiet
+          docker compose -f infra/docker/compose.yaml --profile skycat-tools config --quiet
+
+      - name: Check the documented tool services still exist
+        run: |
+          services="$(docker compose -f infra/docker/compose.yaml \
+            --profile skycat-tools config --services | sort)"
+          echo "$services"
+          for expected in skycat skycat-postgres skycat-init skycat-migrate \
+                          skycat-health skycat-import skycat-validate skycat-reset; do
+            if ! echo "$services" | grep -qx "$expected"; then
+              echo "::error::compose service '$expected' is documented but missing"
+              exit 1
+            fi
+          done
+
+  container-scan:
+    name: container scan
+    runs-on: ubuntu-latest
+    needs: docker-build
+    steps:
+      - name: Download the runtime image
+        uses: actions/download-artifact@v8
+        with:
+          name: skycat-image
+          path: /tmp
+
+      - name: Scan OS and Python packages
+        # Advisory: reports CRITICAL/HIGH without failing the job. Base-image
+        # CVEs regularly have no fixed version available, and blocking merges on
+        # a feed the repository cannot act on trains people to ignore the check.
+        # Raise `--exit-code 1` once a triage policy exists (see docs/operations/ci.md).
+        run: |
+          docker run --rm -v /tmp:/scan aquasec/trivy:latest image \
+            --input /scan/skycat-image.tar \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --exit-code 0 \
+            --no-progress

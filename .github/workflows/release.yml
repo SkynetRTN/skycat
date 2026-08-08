@@ -1,0 +1,162 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish, for example v0.1.0"
+        required: true
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release-build:
+    name: build release distributions
+    runs-on: ubuntu-latest
+    outputs:
+      release-tag: ${{ steps.release_tag.outputs.tag }}
+    steps:
+      - name: Resolve release tag
+        id: release_tag
+        run: echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.release_tag.outputs.tag }}
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Verify tag matches package version
+        run: |
+          uv run --python 3.12 python - <<'PY'
+          from pathlib import Path
+          import os
+          import sys
+
+          import tomllib
+
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          version = project["project"]["version"]
+          expected = f"v{version}"
+          actual = os.environ["RELEASE_TAG"]
+          if actual != expected:
+              print(f"release tag {actual!r} does not match package version {version!r}", file=sys.stderr)
+              print(f"expected tag: {expected}", file=sys.stderr)
+              raise SystemExit(1)
+          print(f"release tag {actual} matches package version {version}")
+          PY
+        env:
+          RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Inspect distribution archives
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import tarfile
+          import zipfile
+
+          wheel = next(Path("dist").glob("skycat-*.whl"))
+          sdist = next(Path("dist").glob("skycat-*.tar.gz"))
+
+          wheel_names = set(zipfile.ZipFile(wheel).namelist())
+          required_wheel = {
+              "skycat/migrations/env.py",
+              "skycat/migrations/script.py.mako",
+          }
+          missing = sorted(required_wheel - wheel_names)
+          if not any(name.startswith("skycat/migrations/versions/") for name in wheel_names):
+              missing.append("skycat/migrations/versions/*.py")
+          if missing:
+              raise SystemExit(f"missing wheel files: {missing}")
+
+          with tarfile.open(sdist) as archive:
+              sdist_names = {"/".join(Path(member.name).parts[1:]) for member in archive.getmembers()}
+          required_sdist = {"pyproject.toml", "README.md", "docs/operations/release.md", "CHANGELOG.md"}
+          missing = sorted(required_sdist - sdist_names)
+          if missing:
+              raise SystemExit(f"missing sdist files: {missing}")
+
+          print(f"inspected {wheel.name} and {sdist.name}")
+          PY
+
+      - name: Install and smoke-test wheel
+        run: |
+          uv venv /tmp/skycat-wheel
+          uv pip install --python /tmp/skycat-wheel/bin/python dist/*.whl
+          /tmp/skycat-wheel/bin/python - <<'PY'
+          import importlib.metadata
+
+          import skycat
+          from alembic.script import ScriptDirectory
+          from skycat.config import CatalogDatabaseConfig
+          from skycat.database.migrate import make_alembic_config
+
+          assert skycat.__version__ == importlib.metadata.version("skycat")
+          script = ScriptDirectory.from_config(make_alembic_config(CatalogDatabaseConfig()))
+          heads = script.get_heads()
+          revisions = list(script.walk_revisions())
+          assert len(heads) == 1, f"expected one packaged head, got {heads}"
+          assert revisions, "no migrations shipped in the wheel"
+          print(f"skycat {skycat.__version__}; packaged migrations: {len(revisions)} revisions, head {heads[0]}")
+          PY
+          /tmp/skycat-wheel/bin/skycat --help
+          /tmp/skycat-wheel/bin/skycat config
+
+      - name: Install and smoke-test sdist
+        run: |
+          uv venv /tmp/skycat-sdist
+          uv pip install --python /tmp/skycat-sdist/bin/python dist/*.tar.gz
+          /tmp/skycat-sdist/bin/python -c "import skycat; print('skycat', skycat.__version__)"
+          /tmp/skycat-sdist/bin/skycat --help
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-dists
+          path: dist/*
+          if-no-files-found: error
+
+  github-release:
+    name: publish draft GitHub Release
+    runs-on: ubuntu-latest
+    needs: release-build
+    environment: github-release
+    permissions:
+      contents: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: Publish draft release assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.release-build.outputs.release-tag }}
+          name: Skycat ${{ needs.release-build.outputs.release-tag }}
+          files: dist/*
+          draft: true
+          fail_on_unmatched_files: true
+          generate_release_notes: true
