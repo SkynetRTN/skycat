@@ -5,6 +5,13 @@ source-controlled summary that release notes should start from.
 
 ## Unreleased
 
+## 0.1.2 - 2026-08-07
+
+- Fixed PyPI/TestPyPI README logo rendering by using an absolute hosted logo URL.
+- Corrected PyPI author and maintainer metadata.
+- Condensed the README into a shorter package landing page that points to the
+  detailed docs.
+
 ## 0.1.1 - 2026-08-07
 
 - Added a manual Trusted Publishing lane for TestPyPI/PyPI release uploads.

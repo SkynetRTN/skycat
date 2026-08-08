@@ -49,8 +49,8 @@ The repository already has the core package shape:
 - The distribution name is currently `skycat`.
 - A console script is configured: `skycat = "skycat.cli.main:main_entry"`.
 - Runtime dependencies are declared.
-- The README is substantial and explains the CLI, API, database model, and local
-  operation.
+- The README is a concise package landing page with links into detailed CLI,
+  API, database, release, and operations docs.
 - CI now runs ruff, pyright, pytest, a real PostgreSQL/PostGIS service,
   package-build smoke tests, Python-version matrix tests, migration graph
   checks, workflow safety, dependency review, and advisory supply-chain scans.
@@ -184,11 +184,12 @@ software, not a populated catalog query service.
 `pyproject.toml` currently declares:
 
 - `name = "skycat"`
-- `version = "0.1.1"`
+- `version = "0.1.2"`
 - `requires-python = ">=3.11, <3.14"`
 - `readme = "README.md"`
-- `authors = [{ name = "Skycat maintainers" }]`
-- `maintainers = [{ name = "James Atkisson", email = "james@atkisson.net" }]`
+- `authors = [{ name = "James Atkisson", email = "james@atkisson.net" }]`
+- `maintainers = [{ name = "SkynetRTN" }]`
+- `project.urls.Organization = "https://skynetgo.org"`
 - runtime dependencies:
   - `sqlalchemy ~= 2.0.38`
   - `geoalchemy2 ~= 0.20.0`
@@ -207,7 +208,7 @@ software, not a populated catalog query service.
 - wheel target:
   - `packages = ["skycat"]`
 
-`skycat/__init__.py` also declares `__version__ = "0.1.1"`.
+`skycat/__init__.py` also declares `__version__ = "0.1.2"`.
 
 ### Existing runtime packaging concerns
 
@@ -352,8 +353,11 @@ PyPI-ready:
 
 ```toml
 [project]
-maintainers = [
+authors = [
     { name = "James Atkisson", email = "james@atkisson.net" },
+]
+maintainers = [
+    { name = "SkynetRTN" },
 ]
 keywords = ["astronomy", "catalogs", "postgis", "postgresql", "photometry"]
 classifiers = [
@@ -413,8 +417,8 @@ Required actions before PyPI publishing:
 
 There are several version concepts in the repository:
 
-- Python package version: `pyproject.toml`, currently `0.1.1`.
-- Runtime `skycat.__version__`, currently `0.1.1`.
+- Python package version: `pyproject.toml`, currently `0.1.2`.
+- Runtime `skycat.__version__`, currently `0.1.2`.
 - Internal database schema version: `INTERNAL_SCHEMA_VERSION = 1`.
 - Importer semantic version: `IMPORTER_VERSION = "1.0.0"`.
 - Alembic migration revisions under `skycat/migrations/versions/`.
@@ -431,7 +435,7 @@ Current status and remaining actions:
   remain an independent data-provenance version.
 - Define when `INTERNAL_SCHEMA_VERSION` changes relative to Alembic migrations.
 - Define Docker tag rules, for example `ghcr.io/skynetrtn/skycat:<python-package-version>`.
-- Use immutable release tags such as `v0.1.1`.
+- Use immutable release tags such as `v0.1.2`.
 
 Practical recommendation:
 
@@ -549,16 +553,16 @@ python -m venv /tmp/skycat-sdist-venv
 
 ### 8. README / package landing page
 
-`README.md` is now doing the right job for GitHub: it opens with the Skycat
-brand, explains the package/CLI purpose, states the package boundary, and puts
-GitHub Release installation near the top. For GitHub-hosted packages, the
-README and GitHub Release notes are the package landing pages.
+`README.md` is now doing the right job for GitHub and PyPI: it opens with the
+Skycat brand, explains the package/CLI purpose, states the package boundary,
+keeps install paths near the top, and links into detailed docs instead of
+duplicating them. For GitHub-hosted packages, the README and GitHub Release
+notes are the package landing pages.
 
 For PyPI, the same README becomes the long description. That adds a stricter
 rendering requirement: PyPI may not display repo-relative images and links the
-same way GitHub does. The current full-width logo reference
-`brand/skycat_logo.png` is appropriate for GitHub, but it must be checked in the
-PyPI renderer before upload.
+same way GitHub does. The README now uses an absolute GitHub-hosted logo URL so
+the package index renderer can fetch the image outside the repository context.
 
 Current GitHub-facing status:
 
@@ -571,20 +575,19 @@ Current GitHub-facing status:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.1/skycat-0.1.1-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.2/skycat-0.1.2-py3-none-any.whl
 ```
 
 ```bash
-python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.1"
+python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.2"
 ```
 
 Remaining PyPI-facing actions:
 
-- Run `twine check --strict dist/*`; PyPA's guide identifies this as the pre-upload
-  check for README rendering problems.
-- Upload to TestPyPI first and visually inspect the rendered project page.
-- If the logo breaks on PyPI, replace the relative image URL with an absolute
-  raw GitHub URL or omit the image from the PyPI long description.
+- Run `twine check --strict dist/*`; PyPA's guide identifies this as the
+  pre-upload check for README rendering problems.
+- Upload to TestPyPI first and visually inspect the rendered project page,
+  including the absolute hosted logo.
 - If repo-relative documentation links break on PyPI, replace the critical
   ones with absolute GitHub URLs or keep PyPI's landing page shorter and direct
   users to GitHub for the full docs.
@@ -681,7 +684,7 @@ For future GitHub Releases:
 1. Confirm `dev` is ready.
 2. Merge `dev` into protected `main`.
 3. Confirm required `main` checks are green.
-4. Tag the protected `main` commit, for example `v0.1.1`.
+4. Tag the protected `main` commit, for example `v0.1.2`.
 5. Let `release.yml` create the draft GitHub Release.
 6. Approve the `github-release` deployment.
 7. Install from the real GitHub Release wheel asset URL:
@@ -689,7 +692,7 @@ For future GitHub Releases:
 ```bash
 python -m venv /tmp/skycat-github-release
 /tmp/skycat-github-release/bin/python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.1/skycat-0.1.1-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.2/skycat-0.1.2-py3-none-any.whl
 /tmp/skycat-github-release/bin/skycat --help
 ```
 
@@ -762,7 +765,7 @@ Users could install from a direct URL, for example:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.1/skycat-0.1.1-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.2/skycat-0.1.2-py3-none-any.whl
 ```
 
 Recommendation: keep GitHub Releases as the canonical release surface even
@@ -810,7 +813,7 @@ python -m venv /tmp/skycat-testpypi
 /tmp/skycat-testpypi/bin/python -m pip install \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  skycat==0.1.1
+  skycat==0.1.2
 /tmp/skycat-testpypi/bin/skycat --help
 ```
 
@@ -818,7 +821,7 @@ Example PyPI install check:
 
 ```bash
 python -m venv /tmp/skycat-pypi
-/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.1
+/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.2
 /tmp/skycat-pypi/bin/skycat --help
 ```
 
@@ -1018,17 +1021,17 @@ This is illustrative, not a patch.
 ```toml
 [project]
 name = "skycat"
-version = "0.1.1"
+version = "0.1.2"
 description = "Build and query versioned local PostgreSQL/PostGIS databases from astronomical reference catalogs."
 readme = "README.md"
 requires-python = ">=3.11, <3.14"
 license = "GPL-3.0-only"
 license-files = ["LICENSE"]
 authors = [
-    { name = "Skycat maintainers" },
+    { name = "James Atkisson", email = "james@atkisson.net" },
 ]
 maintainers = [
-    { name = "Skycat maintainers", email = "..." },
+    { name = "SkynetRTN" },
 ]
 keywords = ["astronomy", "catalogs", "photometry", "postgis", "postgresql"]
 classifiers = [

@@ -90,7 +90,7 @@ not.
   for release validation, and CI runs with it set — so the deep gate cannot
   silently become a unit run.
 - **Getting a database is one command.** A throwaway PostGIS on a tmpfs, with
-  the full recipe in the README's Testing section. It costs about a minute.
+  the full recipe in [ci.md](../operations/ci.md). It costs about a minute.
 - **The unit suite is real.** Parsers, spatial maths, release-state transitions,
   configuration, CLI exit codes, the migration graph, and the documentation
   contract all run with no database at all. Contributors working on those never

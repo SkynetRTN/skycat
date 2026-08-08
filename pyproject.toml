@@ -1,16 +1,16 @@
 [project]
 name = "skycat"
-version = "0.1.1"
+version = "0.1.2"
 description = "Skycat: build and query versioned local PostgreSQL/PostGIS databases from VizieR/CDS-style astronomical reference catalogs."
 readme = "README.md"
 requires-python = ">=3.11, <3.14"
 license = "GPL-3.0-only"
 license-files = ["LICENSE"]
 authors = [
-    { name = "Skycat maintainers" },
+    { name = "James Atkisson", email = "james@atkisson.net" },
 ]
 maintainers = [
-    { name = "James Atkisson", email = "james@atkisson.net" },
+    { name = "SkynetRTN" },
 ]
 keywords = [
     "astronomy",
@@ -57,6 +57,7 @@ skycat = "skycat.cli.main:main_entry"
 
 [project.urls]
 Homepage = "https://github.com/SkynetRTN/skycat"
+Organization = "https://skynetgo.org"
 Repository = "https://github.com/SkynetRTN/skycat"
 Issues = "https://github.com/SkynetRTN/skycat/issues"
 Documentation = "https://github.com/SkynetRTN/skycat#readme"
