@@ -13,7 +13,7 @@ require; the rest are advisory or path-filtered.
 | `kubernetes.yml` | `kubernetes manifests` | `infra/kubernetes/**` | advisory |
 | `codeql.yml` | `codeql python` | every PR, weekly | advisory |
 | `secret-scan.yml` | `secret scan` | every PR, push to `main` | advisory |
-| `release.yml` | `build release distributions`, `publish draft GitHub Release`, `publish distributions to TestPyPI`, `validate TestPyPI release`, `publish distributions to PyPI` | release tags, manual dispatch | release-only |
+| `release.yml` | `build release distributions`, `publish draft GitHub Release`, `publish distributions to TestPyPI`, `validate TestPyPI artifact and metadata`, `publish distributions to PyPI` | release tags, manual dispatch | release-only |
 
 ## Require the aggregates, not the jobs
 
@@ -103,9 +103,12 @@ schemas — are path-filtered and therefore stay advisory.
   and sdist once, checks package metadata with Twine, smoke-tests both local
   install paths, then attaches those exact artifacts to a draft GitHub Release
   from the `github-release` environment. Tag pushes also publish the tested
-  artifacts to TestPyPI and run a TestPyPI install/rendered-page validation.
-  Real PyPI uploads are still manual-dispatch only, and the PyPI job
-  re-validates TestPyPI before uploading.
+  artifacts to TestPyPI and validate the TestPyPI Simple API, JSON metadata,
+  uploaded artifact hashes, README metadata source, exact TestPyPI wheel
+  install, CLI entry point, and packaged migrations. After the draft GitHub
+  Release and TestPyPI validation succeed, the PyPI upload job is queued behind
+  the protected `pypi` environment. That required review is the manual gate for
+  real PyPI, and the PyPI job re-validates TestPyPI before uploading.
 
 ## Action versions
 
