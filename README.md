@@ -52,7 +52,7 @@ python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.0"
 
 Replace `v0.1.0` with the release tag you intend to run. The installed package
 provides the `skycat` CLI, Python APIs, parsers, validators, and Alembic
-migrations. See [docs/RELEASE.md](docs/RELEASE.md) for the release process and
+migrations. See [docs/operations/release.md](docs/operations/release.md) for the release process and
 artifact checks.
 
 ## Package scope
@@ -73,20 +73,20 @@ Skycat is licensed under the GNU General Public License v3.0. See
 
 ## Documentation
 
-This README is the package guide. The rest is in `docs/`:
+This README is the package guide. The rest is in [`docs/`](docs/README.md),
+grouped by the question you arrived with:
 
 | Document | Read it when |
 |---|---|
-| [docs/API_STABILITY.md](docs/API_STABILITY.md) | You are building against Skycat and need to know what will not move under you. |
-| [docs/ADD_FAMILY.md](docs/ADD_FAMILY.md) | You are adding a catalog family — the worked version of the checklist below. |
-| [docs/PROVENANCE.md](docs/PROVENANCE.md) | You are mirroring source data, or need to prove a release matches an upstream snapshot. |
-| [docs/OPERATIONS.md](docs/OPERATIONS.md) | You are about to run something destructive, watching a long import, or rotating credentials. |
-| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | A query got slow, or you want targets to measure against. |
-| [docs/SKYCAT_DATABASE.md](docs/SKYCAT_DATABASE.md) | Operator quick-reference: schema map, release lifecycle, Compose, Kubernetes. |
-| [docs/RELEASE.md](docs/RELEASE.md) | You are cutting a package release. |
-| [docs/CI.md](docs/CI.md) | A required check failed, or you are changing a workflow. |
-| [docs/decisions/](docs/decisions) | You are about to propose something the project already decided against. |
-| [docs/design/skycat-design.md](docs/design/skycat-design.md) | You want the whole design in one pass. |
+| [docs/reference/architecture.md](docs/reference/architecture.md) | You want the whole design in one pass: schemas, release model, spatial model, ingestion, deployment. |
+| [docs/reference/api-stability.md](docs/reference/api-stability.md) | You are building against Skycat and need to know what will not move under you. |
+| [docs/guides/add-family.md](docs/guides/add-family.md) | You are adding a catalog family — the worked version of the checklist below. |
+| [docs/guides/provenance.md](docs/guides/provenance.md) | You are mirroring source data, or need to prove a release matches an upstream snapshot. |
+| [docs/operations/runbook.md](docs/operations/runbook.md) | You are about to run something destructive, watching a long import, or rotating credentials. |
+| [docs/operations/performance.md](docs/operations/performance.md) | A query got slow, or you want targets to measure against. |
+| [docs/operations/ci.md](docs/operations/ci.md) | A required check failed, or you are changing a workflow. |
+| [docs/operations/release.md](docs/operations/release.md) | You are cutting a package release. |
+| [docs/decisions/](docs/decisions/README.md) | You are about to propose something the project already decided against. |
 
 `docs/working/` holds dated planning notes. They are snapshots of open work, not
 descriptions of the current API, and are deliberately excluded from the
@@ -429,7 +429,7 @@ production → mark READY → (explicit) ATTACH+ACTIVATE → record completion`.
   short read of a multi-GB catalog still parses cleanly.
 
 For watching a long import, the structured event log, and what to do when one
-fails, see [docs/OPERATIONS.md](docs/OPERATIONS.md).
+fails, see [docs/operations/runbook.md](docs/operations/runbook.md).
 
 ---
 
@@ -463,7 +463,7 @@ Six touch points, each small and each in the obviously-named place. There is
 deliberately **no** plugin descriptor or registration framework — the cost of a
 new family is low enough that indirection would cost more than it saves.
 
-This is the checklist. [docs/ADD_FAMILY.md](docs/ADD_FAMILY.md) is the worked
+This is the checklist. [docs/guides/add-family.md](docs/guides/add-family.md) is the worked
 version — what each file must contain, what the ingestion engine requires of it,
 the validation-level choice, and a review checklist. Read it before starting.
 
@@ -517,7 +517,7 @@ generic.
   loading.
 
 The guards prevent the wrong *target*; they cannot tell you that you picked the
-wrong *command*. [docs/OPERATIONS.md](docs/OPERATIONS.md) has the table
+wrong *command*. [docs/operations/runbook.md](docs/operations/runbook.md) has the table
 comparing what `clean-staging`, `remove-release`, `import --replace`, `reset`,
 and `docker volume rm` each destroy — including the two that quietly delete
 diagnostic evidence.

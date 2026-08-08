@@ -9,7 +9,7 @@ a number instead of an impression.
 > **These are targets, not measurements.** They are the latencies the design is
 > intended to deliver on a reasonably provisioned server, and the thresholds at
 > which to start investigating. Nothing here is a benchmark result, and nothing
-> here is part of the [stability contract](API_STABILITY.md). Measure on your own
+> here is part of the [stability contract](../reference/api-stability.md). Measure on your own
 > hardware — the numbers below are for noticing regressions, not for citing.
 
 ## What the targets assume

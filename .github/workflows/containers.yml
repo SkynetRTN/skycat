@@ -2,7 +2,7 @@ name: Containers
 
 # Kubernetes Jobs and the local Compose stack both run Skycat through an image,
 # so a Dockerfile regression breaks operations while every Python test still
-# passes. Path-filtered and advisory by default — see docs/CI.md before making
+# passes. Path-filtered and advisory by default — see docs/operations/ci.md before making
 # any of these a required check.
 
 on:
@@ -120,7 +120,7 @@ jobs:
         # Advisory: reports CRITICAL/HIGH without failing the job. Base-image
         # CVEs regularly have no fixed version available, and blocking merges on
         # a feed the repository cannot act on trains people to ignore the check.
-        # Raise `--exit-code 1` once a triage policy exists (see docs/CI.md).
+        # Raise `--exit-code 1` once a triage policy exists (see docs/operations/ci.md).
         run: |
           docker run --rm -v /tmp:/scan aquasec/trivy:latest image \
             --input /scan/skycat-image.tar \

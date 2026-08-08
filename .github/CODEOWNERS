@@ -5,7 +5,7 @@
 # does lasting damage, and they require the maintainer's review.
 #
 # Paired with branch protection ("Require review from Code Owners") this is what
-# makes the model enforceable rather than customary — see docs/CI.md.
+# makes the model enforceable rather than customary — see docs/operations/ci.md.
 
 # Default owner for anything not matched below.
 *                       @archon774

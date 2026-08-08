@@ -20,18 +20,18 @@ risks, and follow-up improvements rather than restating the stable design.
 > |---|---|---|
 > | H1 | PostGIS coverage hard to miss | `--require-postgis` (+ `SKYCAT_REQUIRE_POSTGIS`) in `tests/conftest.py`; CI runs it; README "Release validation" |
 > | H2 | Tighten type checking | `database/orm.require_row`, `database/engine.driver_connection`, `Mapped[str]` on registry enum columns; null-safety pyright rules promoted to **error** at zero |
-> | H3 | Public stability contract | `docs/API_STABILITY.md` |
-> | H4 | New-family developer guide | `docs/ADD_FAMILY.md` |
-> | H5 | Source-data provenance | `docs/PROVENANCE.md` |
-> | M1 | Destructive-command ambiguity | `docs/OPERATIONS.md` — one table, plus the two commands that delete diagnostic evidence |
-> | M2 | Publishing and versioning | `docs/RELEASE.md` + `CHANGELOG.md`, landed on `dev` separately |
-> | M3 | Measurable query performance | `docs/PERFORMANCE.md` — targets, conditions, measurement procedure |
-> | M4 | Ingestion observability | structured `skycat.ingestion` events at every phase boundary; `docs/OPERATIONS.md` documents the fields and how to watch a running import |
+> | H3 | Public stability contract | `docs/reference/api-stability.md` |
+> | H4 | New-family developer guide | `docs/guides/add-family.md` |
+> | H5 | Source-data provenance | `docs/guides/provenance.md` |
+> | M1 | Destructive-command ambiguity | `docs/operations/runbook.md` — one table, plus the two commands that delete diagnostic evidence |
+> | M2 | Publishing and versioning | `docs/operations/release.md` + `CHANGELOG.md`, landed on `dev` separately |
+> | M3 | Measurable query performance | `docs/operations/performance.md` — targets, conditions, measurement procedure |
+> | M4 | Ingestion observability | structured `skycat.ingestion` events at every phase boundary; `docs/operations/runbook.md` documents the fields and how to watch a running import |
 > | M5 | Generated artifacts | `.gitignore` extended (source-mirror leftovers, coverage, editor/OS, `catalogs/`) |
 > | L1 | PostgreSQL/PostGIS-only ADR | `docs/decisions/0001-postgresql-postgis-only.md` |
-> | L2 | Schema diagram | `docs/SKYCAT_DATABASE.md` — ER map + release-lifecycle state diagram |
+> | L2 | Schema diagram | `docs/reference/architecture.md` — ER map + release-lifecycle state diagram |
 > | L3 | Reader lifecycle examples | README "Reader lifecycle" |
-> | L4 | Credential rotation | `docs/OPERATIONS.md` |
+> | L4 | Credential rotation | `docs/operations/runbook.md` |
 >
 > **Deviations.** H1 suggested a `make test-postgis` target; a Makefile was not
 > added, because `uv` is the project's only entry point and a second one would
@@ -42,7 +42,8 @@ risks, and follow-up improvements rather than restating the stable design.
 >
 > **Found while implementing**, outside the review's scope but fixed here:
 > `docs/design/skycat-design` had been moved twice and pointed one level above
-> the repository root the whole time, and the README documented
+> the repository root the whole time (that file has since been merged into
+> `docs/reference/architecture.md`), and the README documented
 > `skycat cone … --json`, which Click rejects because `--json` is a group
 > option. `tests/test_docs.py` now has a test for each.
 

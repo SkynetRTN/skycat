@@ -9,7 +9,7 @@ that may change in any release.
 Skycat is `0.x`. Nothing here is a promise of permanence — it is a promise about
 **how a change is made**: a break in a stable surface is called out in the
 release notes and the changelog, with a migration note. A change to an internal
-surface is not. See [RELEASE.md](RELEASE.md) for how versions are cut.
+surface is not. See [release.md](../operations/release.md) for how versions are cut.
 
 ## Stable
 
@@ -42,7 +42,7 @@ The `skycat` console script is a contract, because Kubernetes Jobs and shell
 operators are both callers that cannot be refactored by a search-and-replace.
 
 - **Command names and their arguments** — the table in the
-  [README](../README.md#cli).
+  [README](../../README.md#cli).
 - **Flag names.** A flag may gain a new value; it does not silently change
   meaning.
 - **Exit codes**, which the ingest Job reads:
@@ -117,14 +117,14 @@ Adding a family is an additive change to a stable surface: a new parent table,
 new columns, a new `source_format` key, a new row in the family table. It does
 not break existing families, and it does not need a major version. The migration
 that creates it must never touch another family's table — see
-[ADD_FAMILY.md](ADD_FAMILY.md).
+[add-family.md](../guides/add-family.md).
 
 ## What "stable" does not cover
 
 - **Row ordering** without an explicit `order_by`. The default is nearest-first
   by angular separation; a query with `limit` and no `order_by` is
   under-specified by the caller, not by Skycat.
-- **Performance.** Target latencies live in [PERFORMANCE.md](PERFORMANCE.md) and
+- **Performance.** Target latencies live in [performance.md](../operations/performance.md) and
   are goals for tuning, not a contract.
 - **`approx_row_count`** values. They track upstream catalog sizes and change
   when upstream does.

@@ -1,6 +1,6 @@
 # Adding a catalog family
 
-The README's [checklist](../README.md#adding-a-catalog-family) names the six
+The README's [checklist](../../README.md#adding-a-catalog-family) names the six
 touch points. This page is the worked version: what each file must actually
 contain, what the ingestion engine expects of it, and what a reviewer will look
 for. It is written to be read once, front to back, before you write the first
@@ -28,7 +28,7 @@ It does **not** have to be unique: Stetson's `Star` id repeats across clusters,
 which is correct, matches the provider, and is reported as INFO rather than
 treated as corruption.
 
-Then read [PROVENANCE.md](PROVENANCE.md) and put the source files under
+Then read [provenance.md](provenance.md) and put the source files under
 `SKYCAT_DATA_ROOT` before writing code. Discovery is the first thing that will
 fail, and it is much easier to debug with the real files present.
 
@@ -301,8 +301,9 @@ The bar for `CRITICAL` is high: it stops a multi-hour import. If the answer to
   ordering, and quality-filter tests then cover the new family automatically —
   that coverage is the reason the fixture is shaped as a loop.
 - **Add a row to the family table at the top of `README.md`** and to
-  `docs/design/skycat-design.md`. `tests/test_docs.py` will not catch a missing
-  row, but a user reading the README to find out what Skycat supports will.
+  `docs/reference/architecture.md`. `tests/test_docs.py` will not catch a
+  missing row, but a user reading the README to find out what Skycat supports
+  will.
 - **Run the integration suite for real.** A unit run proves nothing here:
 
   ```bash
