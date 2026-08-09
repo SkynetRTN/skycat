@@ -365,7 +365,7 @@ def test_phase_b2_lock_timeout_fails_without_demoting_active_release(catalog, ca
                 def run_import() -> None:
                     try:
                         import_release(settings, "apass", "dr10", replace=True, force=True)
-                    except BaseException as exc:  # noqa: BLE001 -- test thread needs it
+                    except Exception as exc:
                         result.put(exc)
                     else:
                         result.put(None)
