@@ -1,9 +1,9 @@
 ---
-status: open
+status: closed
 reviewed: 2026-08-07
 branch: docs/code-review-audit
 authority: code-inspection (skycat @ 7e7cf2d, origin/dev) + ruff/pyright/pytest gates + full PostGIS suite and twelve reproductions against a throwaway PostgreSQL 16 / PostGIS 3.5 on 127.0.0.1:5435
-implementation: phases 1-5 landed 2026-08-07 through 2026-08-09; phase 6 open
+implementation: phases 1-6 landed 2026-08-07 through 2026-08-09
 ---
 
 # Skycat code review, August 2026
@@ -19,9 +19,9 @@ The gates are clean and the happy paths are correct. Every finding below is a
 failure path, and twelve of the eighteen were reproduced against a live
 database rather than inferred.
 
-> **Status: phases 1–5 landed (2026-08-07 through 2026-08-09); phase 6 open.**
-> Sixteen findings have been implemented. The findings below are kept verbatim
-> as the record of what was wrong; the table says where each one now lives.
+> **Status: phases 1–6 landed (2026-08-07 through 2026-08-09).** All eighteen
+> findings have been implemented. The findings below are kept verbatim as the
+> record of what was wrong; the table says where each one now lives.
 > Three were resolved differently from the suggestion, and two of the review's
 > own claims turned out to be wrong — all noted under the table.
 >
@@ -35,6 +35,7 @@ database rather than inferred.
 > | F8 | Reader statement timeout caps ingest and migrations | 4 | `config.py`, `database/engine.py`, `README.md` — generic `SKYCAT_DB_STATEMENT_TIMEOUT` is reader/default-scoped, with per-role overrides |
 > | F9 | Failure recorder fails silently | 1 | `ingestion/runner.py` — `_record_failure()` on an independent short-lived engine, logging `import.record_failed` at ERROR |
 > | F11 | Stale/invalid resolved releases return `[]` | 5 | `query/cone.py`, `query/crossmatch.py`, `client.py` — queryable states are enforced and supplied `ResolvedRelease` objects are rechecked against the registry |
+> | F12 | Rejected-row fraction is not checked, coordinate checks always pass | 6 | `validation/common.py`, `tests/test_integration.py` — high reject fractions warn, coordinate reject checks report honestly at WARNING level, and activation is gated on those warnings |
 > | F13 | `failure_detail = None` writes JSON `null` | 1 | `models/registry.py` — `JSONB(none_as_null=True)` |
 > | F5 | Special character in a password breaks `init` | 2 | `database/migrate.py` — `_ini_literal()` at the configparser boundary |
 > | F10 | Caller-input errors escape as `ValueError` | 2 | `query/cone.py`, `query/crossmatch.py` — `_validate_centre()`, `_validate_limit()`, shared `_python_type()` |
@@ -42,9 +43,10 @@ database rather than inferred.
 > | F18 | Two stable docs outside the doc test | 2 | `tests/test_docs.py` — `ci.md` and `release.md` added, plus a rewritten invocation matcher |
 > | F4 | Autogenerate drops every partition | 3 | `database/autogen.py` (new), `migrations/env.py`, all four family models, `models/registry.py`, `database/base.py` |
 > | F15 | `remove_release` string-splits the parent | 3 | `ingestion/maintenance.py` — `inhparent::regclass` from the existing `pg_inherits` query |
+> | F16 | Release-state and lock docs drifted from the runner | 6 | `docs/reference/architecture.md`, `docs/operations/runbook.md`, `CLAUDE.md` — state diagram no longer assigns STAGING, and Phase B1's parent ACCESS SHARE lock is described accurately |
 > | F17 | Dead capture group in the replicator | 3 | `ingestion/runner.py` |
 >
-> **Open.** F12 and F16. Phase 6 remains the only open implementation phase.
+> **Open.** None.
 >
 > **Deviations.** F5 was fixed with the one-line configparser escape rather than
 > the cleaner `cfg.attributes["connection"]` route, because `migrations/env.py`
@@ -964,11 +966,11 @@ Ranked by what a failure would cost, not by how hard the test is to write.
 
 ## 5. Action plan
 
-Six phases. Phases 1–3 carried the four remaining high-severity findings and
+Six phases, now complete. Phases 1–3 carried the four remaining high-severity findings and
 were bug fixes to behaviour that was undocumented or actively contradicted by
 the docs, so none of them needed a decision record. **Phase 5 changed
 documented-stable surfaces and landed with ADR 0002 plus docs updates**, per
-the docs-are-tested convention. Phase 6 remains open.
+the docs-are-tested convention.
 
 ```
  1 failed imports ──┬── 4 lock/timeout safety
@@ -1128,6 +1130,8 @@ F1's.
 
 ### Phase 6 — Validation gating and documentation accuracy (F12, F16)
 
+**Status.** Landed on `phase-6-validation-doc-accuracy`.
+
 *Scope.* Add the reject-rate warning and make `ra_range`/`dec_range` report
 honestly; correct the release-state diagram and the "no lock on the parent"
 sentence.
@@ -1138,10 +1142,11 @@ sentence.
 *Tests that must exist first.* A `postgis`-marked test that a source whose
 rejected fraction exceeds the threshold produces a `passed_with_warnings`
 status and is not activated by `--activate` without `--allow-warnings`, and a
-counterpart that a small rejected fraction still passes clean. The existing
-`test_short_import_warns_against_the_expected_row_count` must keep passing —
-the six-row fixture has one rejected row in seven, so pick the threshold with
-that in mind or adjust the fixture deliberately.
+counterpart clean source that passes without warnings. A small coordinate-reject
+source stays below the reject-rate threshold, while the coordinate warning still
+fires honestly. The existing `test_short_import_warns_against_the_expected_row_count`
+must keep passing — the six-row fixture has one rejected row in seven, so pick
+the threshold with that in mind or adjust the fixture deliberately.
 
 *Acceptance.* A source with a high coordinate-rejection rate cannot
 auto-activate. `docs/reference/architecture.md`'s state diagram matches the

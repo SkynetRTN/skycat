@@ -229,6 +229,14 @@ FROM catalog_registry.ingestion_run
 ORDER BY started_at DESC LIMIT 1;
 ```
 
+**Validation warnings can be intentional activation gates.** Invalid coordinate
+rows are rejected before production and retained in the `*_rejects` table, but
+they still make the import `passed_with_warnings`. So does a high rejected-row
+fraction: more than 20% of staged rows rejected means the source may be a wrong
+file, shifted columns, or a changed upstream format. Either case imports the
+valid rows and leaves the release READY, but `import --activate` will not make
+it active unless you rerun with `--allow-warnings` after reviewing the rejects.
+
 ### When an import fails
 
 **Staging is left behind on purpose.** Phase A commits before the transform

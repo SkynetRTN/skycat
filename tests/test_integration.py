@@ -8,7 +8,9 @@ reachable catalog PostGIS database (skipped otherwise — see conftest).
 
 from __future__ import annotations
 
+from dataclasses import replace
 from importlib import import_module
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -31,6 +33,7 @@ from skycat.query import (
 )
 from skycat.spatial import angular_separation_deg
 from skycat.registry import activate_release, resolve_release
+from skycat.registry.catalog_defs import get_family_def
 
 pytestmark = pytest.mark.postgis
 
@@ -79,6 +82,51 @@ def _invoke_cli(settings, monkeypatch, *args):
     cli_main = import_module("skycat.cli.main")
     monkeypatch.setattr(cli_main, "load_settings", lambda: settings)
     return CliRunner().invoke(cli_main.main, list(args), catch_exceptions=False)
+
+
+def _patch_apass_dr10_expected(monkeypatch, expected_rows: int) -> None:
+    """Patch only the runner's APASS DR10 expectation for this import attempt."""
+    runner = import_module("skycat.ingestion.runner")
+    original = get_family_def("apass")
+    assert original is not None
+    releases = tuple(
+        replace(rel, approx_row_count=expected_rows) if rel.slug == "dr10" else rel
+        for rel in original.releases
+    )
+    patched = replace(original, releases=releases)
+    monkeypatch.setattr(
+        runner,
+        "get_family_def",
+        lambda slug: patched if slug.lower() == "apass" else get_family_def(slug),
+    )
+
+
+def _apass_dr10_source(
+    tmp_path: Path,
+    name: str,
+    *,
+    valid_rows: int,
+    bad_ra_rows: int = 0,
+    bad_dec_rows: int = 0,
+) -> Path:
+    """Write a temporary APASS DR10 source with controlled coordinate rejects."""
+    source_dir = tmp_path / name
+    source_dir.mkdir()
+    fixture_lines = (Path(__file__).parent / "data" / "apass_dr10_sample.txt").read_text().splitlines()
+    header = fixture_lines[0]
+    valid = fixture_lines[1:1 + valid_rows]
+    invalid: list[str] = []
+    templates = fixture_lines[1:7]
+    for index in range(bad_ra_rows + bad_dec_rows):
+        fields = templates[index % len(templates)].split()
+        fields[0] = f"090-BAD{index:04d}"
+        if index < bad_ra_rows:
+            fields[1] = "999.000000"
+        else:
+            fields[3] = "99.000000"
+        invalid.append(" ".join(fields))
+    (source_dir / "zp_phase6.txt").write_text("\n".join([header, *valid, *invalid]) + "\n")
+    return source_dir
 
 
 def test_schemas_and_postgis(imported):
@@ -348,6 +396,120 @@ def test_expected_row_count_is_recorded_from_the_family_def(imported):
         ).scalar()
     eng.dispose()
     assert expected == 128_632_615
+
+
+def test_high_coordinate_reject_rate_blocks_auto_activation(
+    imported, tmp_path, monkeypatch
+):
+    """A source with many coordinate rejects imports, but cannot auto-activate.
+
+    DR10 is made non-active first so this exercises the normal activation gate,
+    not the in-place ACTIVE replacement self-loop.
+    """
+    source = _apass_dr10_source(
+        tmp_path, "high-reject-dr10", valid_rows=1, bad_ra_rows=1, bad_dec_rows=1
+    )
+    _activate(imported, "apass", "DR6")
+    try:
+        with monkeypatch.context() as m:
+            _patch_apass_dr10_expected(m, expected_rows=1)
+            report = import_release(
+                imported,
+                "apass",
+                "dr10",
+                activate=True,
+                replace=True,
+                force=True,
+                explicit_dir=source,
+            )
+
+        checks = {check["name"]: check for check in report.checks}
+        assert report.validation_status == "passed_with_warnings"
+        assert report.activated is False
+        assert report.state == "ready"
+        assert checks["reject_rate"]["level"] == "warning"
+        assert checks["reject_rate"]["passed"] is False
+        assert "2/3 rows rejected" in checks["reject_rate"]["detail"]
+        assert checks["ra_range"]["level"] == "warning"
+        assert checks["ra_range"]["passed"] is False
+        assert checks["dec_range"]["level"] == "warning"
+        assert checks["dec_range"]["passed"] is False
+        assert _release_state(imported, "apass", "DR6") == "active"
+        assert _release_state(imported, "apass", "DR10") == "ready"
+    finally:
+        import_release(
+            imported,
+            "apass",
+            "dr10",
+            activate=True,
+            allow_warnings=True,
+            replace=True,
+            force=True,
+        )
+
+
+def test_clean_import_has_passing_reject_rate(imported, tmp_path, monkeypatch):
+    source = _apass_dr10_source(tmp_path, "clean-dr10", valid_rows=5)
+    try:
+        with monkeypatch.context() as m:
+            _patch_apass_dr10_expected(m, expected_rows=5)
+            report = import_release(
+                imported,
+                "apass",
+                "dr10",
+                replace=True,
+                force=True,
+                explicit_dir=source,
+            )
+
+        checks = {check["name"]: check for check in report.checks}
+        assert report.validation_status == "passed"
+        assert checks["reject_rate"]["passed"] is True
+        assert checks["ra_range"]["passed"] is True
+        assert checks["dec_range"]["passed"] is True
+    finally:
+        import_release(
+            imported,
+            "apass",
+            "dr10",
+            activate=True,
+            allow_warnings=True,
+            replace=True,
+            force=True,
+        )
+
+
+def test_small_coordinate_reject_fraction_does_not_trip_reject_rate(
+    imported, tmp_path, monkeypatch
+):
+    source = _apass_dr10_source(tmp_path, "low-reject-dr10", valid_rows=5, bad_ra_rows=1)
+    try:
+        with monkeypatch.context() as m:
+            _patch_apass_dr10_expected(m, expected_rows=5)
+            report = import_release(
+                imported,
+                "apass",
+                "dr10",
+                replace=True,
+                force=True,
+                explicit_dir=source,
+            )
+
+        checks = {check["name"]: check for check in report.checks}
+        assert report.validation_status == "passed_with_warnings"
+        assert checks["reject_rate"]["passed"] is True
+        assert checks["ra_range"]["passed"] is False
+        assert checks["dec_range"]["passed"] is True
+    finally:
+        import_release(
+            imported,
+            "apass",
+            "dr10",
+            activate=True,
+            allow_warnings=True,
+            replace=True,
+            force=True,
+        )
 
 
 def test_default_release_id_column_is_gone(imported):
