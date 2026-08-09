@@ -68,9 +68,9 @@ Do not rebuild artifacts in the publish job.
 
 The release workflow can also publish the tested `release-dists` artifact to
 TestPyPI and PyPI through Trusted Publishing. Pushing a `v*.*.*` tag builds the
-artifacts, creates the draft GitHub Release, publishes to TestPyPI, installs
-from TestPyPI, and checks the rendered TestPyPI project page. Real PyPI
-publishing remains manual-dispatch only and is gated by the protected `pypi`
+artifacts, creates the draft GitHub Release, publishes to TestPyPI, validates
+TestPyPI metadata and artifact hashes through machine-readable APIs, installs
+from TestPyPI, and then queues the real PyPI upload behind the protected `pypi`
 environment.
 
 Before the first package-index upload:
@@ -89,24 +89,26 @@ Before the first package-index upload:
 Normal publish sequence:
 
 1. Merge the release branch through `dev` and protected `main`.
-2. Tag the protected `main` commit, for example `v0.1.4`.
-3. Let the tag-push workflow build once, publish to TestPyPI, run the TestPyPI
-   install smoke test, and check the rendered TestPyPI page.
-4. Inspect the TestPyPI workflow result and project page.
-5. Run the release workflow manually for the same tag with `publish_to_pypi`
-   enabled.
-6. Approve the `pypi` environment deployment. The PyPI job re-validates
-   TestPyPI before uploading the same tested `release-dists` artifact.
-7. Install from PyPI in a clean environment.
+2. Tag the protected `main` commit, for example `v0.1.5`.
+3. Approve the `github-release` environment deployment if it is protected.
+4. Let the tag-push workflow publish to TestPyPI and validate the TestPyPI
+   Simple API, JSON metadata, uploaded artifact hashes, README metadata source,
+   exact TestPyPI wheel install, CLI entry point, and packaged migrations.
+5. Approve the queued `pypi` environment deployment when ready. The PyPI job
+   re-validates TestPyPI before uploading the same tested `release-dists`
+   artifact.
+6. Install from PyPI in a clean environment.
 
-The automated TestPyPI install check uses this package-index shape:
+The automated TestPyPI install check gets the exact wheel URL from TestPyPI JSON
+metadata and installs that TestPyPI-hosted file while resolving dependencies
+from PyPI. For a manual name-resolution check, use the pinned release:
 
 ```bash
 python -m venv /tmp/skycat-testpypi
 /tmp/skycat-testpypi/bin/python -m pip install \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  skycat==0.1.4
+  skycat==0.1.5
 /tmp/skycat-testpypi/bin/skycat --help
 ```
 
@@ -114,7 +116,7 @@ PyPI install check:
 
 ```bash
 python -m venv /tmp/skycat-pypi
-/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.4
+/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.5
 /tmp/skycat-pypi/bin/skycat --help
 ```
 
@@ -124,13 +126,13 @@ Direct wheel install from a GitHub Release:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.4/skycat-0.1.4-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.5/skycat-0.1.5-py3-none-any.whl
 ```
 
 Source install from a Git tag:
 
 ```bash
-python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.4"
+python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.5"
 ```
 
 Both forms install Skycat software only. They do not create or populate the

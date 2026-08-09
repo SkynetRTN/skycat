@@ -184,7 +184,7 @@ software, not a populated catalog query service.
 `pyproject.toml` currently declares:
 
 - `name = "skycat"`
-- `version = "0.1.4"`
+- `version = "0.1.5"`
 - `requires-python = ">=3.11, <3.14"`
 - `readme = "README.md"`
 - `authors = [{ name = "James Atkisson", email = "james@atkisson.net" }]`
@@ -208,7 +208,7 @@ software, not a populated catalog query service.
 - wheel target:
   - `packages = ["skycat"]`
 
-`skycat/__init__.py` also declares `__version__ = "0.1.4"`.
+`skycat/__init__.py` also declares `__version__ = "0.1.5"`.
 
 ### Existing runtime packaging concerns
 
@@ -417,8 +417,8 @@ Required actions before PyPI publishing:
 
 There are several version concepts in the repository:
 
-- Python package version: `pyproject.toml`, currently `0.1.4`.
-- Runtime `skycat.__version__`, currently `0.1.4`.
+- Python package version: `pyproject.toml`, currently `0.1.5`.
+- Runtime `skycat.__version__`, currently `0.1.5`.
 - Internal database schema version: `INTERNAL_SCHEMA_VERSION = 1`.
 - Importer semantic version: `IMPORTER_VERSION = "1.0.0"`.
 - Alembic migration revisions under `skycat/migrations/versions/`.
@@ -435,7 +435,7 @@ Current status and remaining actions:
   remain an independent data-provenance version.
 - Define when `INTERNAL_SCHEMA_VERSION` changes relative to Alembic migrations.
 - Define Docker tag rules, for example `ghcr.io/skynetrtn/skycat:<python-package-version>`.
-- Use immutable release tags such as `v0.1.4`.
+- Use immutable release tags such as `v0.1.5`.
 
 Practical recommendation:
 
@@ -575,19 +575,21 @@ Current GitHub-facing status:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.4/skycat-0.1.4-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.5/skycat-0.1.5-py3-none-any.whl
 ```
 
 ```bash
-python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.4"
+python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.5"
 ```
 
 Remaining PyPI-facing actions:
 
 - Run `twine check --strict dist/*`; PyPA's guide identifies this as the
   pre-upload check for README rendering problems.
-- Upload to TestPyPI first and visually inspect the rendered project page,
-  including the absolute hosted logo.
+- Upload to TestPyPI first and validate machine-readable metadata, artifact
+  hashes, and clean install behavior from GitHub Actions.
+- Visually inspect the rendered project page manually when a human page review
+  is needed.
 - If repo-relative documentation links break on PyPI, replace the critical
   ones with absolute GitHub URLs or keep PyPI's landing page shorter and direct
   users to GitHub for the full docs.
@@ -684,7 +686,7 @@ For future GitHub Releases:
 1. Confirm `dev` is ready.
 2. Merge `dev` into protected `main`.
 3. Confirm required `main` checks are green.
-4. Tag the protected `main` commit, for example `v0.1.4`.
+4. Tag the protected `main` commit, for example `v0.1.5`.
 5. Let `release.yml` create the draft GitHub Release.
 6. Approve the `github-release` deployment.
 7. Install from the real GitHub Release wheel asset URL:
@@ -692,7 +694,7 @@ For future GitHub Releases:
 ```bash
 python -m venv /tmp/skycat-github-release
 /tmp/skycat-github-release/bin/python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.4/skycat-0.1.4-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.5/skycat-0.1.5-py3-none-any.whl
 /tmp/skycat-github-release/bin/skycat --help
 ```
 
@@ -707,7 +709,10 @@ Implemented structure on `feature/pypi-release-readiness`:
 - Keep `release-build` as the single build/test source.
 - Keep `github-release` as the draft GitHub Release publisher.
 - Add `testpypi-publish`, gated by a `testpypi` environment.
-- Add `pypi-publish`, gated by a stricter `pypi` environment.
+- Add `testpypi-validation` for Simple API, JSON metadata, artifact hashes,
+  README metadata source, install, CLI, and packaged-migration checks.
+- Add `pypi-publish`, gated by a stricter `pypi` environment after the draft
+  GitHub Release and TestPyPI validation have succeeded.
 - Give PyPI jobs `id-token: write` at the job level only.
 - Do not give the build or GitHub Release job OIDC publishing permission.
 - Use TestPyPI before real PyPI for the first upload.
@@ -737,8 +742,11 @@ jobs:
 ```
 
 The real PyPI job is the same shape without `repository-url`, using the `pypi`
-environment and the PyPI trusted publisher configuration for
-`SkynetRTN/skycat`, `.github/workflows/release.yml`, and environment `pypi`.
+environment and the PyPI trusted publisher configuration for `SkynetRTN/skycat`,
+`.github/workflows/release.yml`, and environment `pypi`. On a tag-push release,
+that job is queued automatically after the draft GitHub Release and TestPyPI
+validation jobs succeed; the protected environment approval remains the manual
+gate before the real PyPI upload.
 
 ## GitHub hosting options
 
@@ -765,7 +773,7 @@ Users could install from a direct URL, for example:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.4/skycat-0.1.4-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.5/skycat-0.1.5-py3-none-any.whl
 ```
 
 Recommendation: keep GitHub Releases as the canonical release surface even
@@ -802,9 +810,13 @@ not as a replacement. The artifact sequence should be:
 1. Build and test once in `release-build`.
 2. Publish a draft GitHub Release from the tested artifacts.
 3. Upload the same artifacts to TestPyPI.
-4. Install from TestPyPI in a clean environment.
-5. Upload the same artifacts to PyPI.
-6. Install from PyPI in a clean environment.
+4. Validate TestPyPI's Simple API, JSON metadata, uploaded artifact hashes,
+   README metadata source, exact TestPyPI wheel install, CLI entry point, and
+   packaged migrations.
+5. Queue the real PyPI upload behind the protected `pypi` environment.
+6. Approve the `pypi` deployment when ready.
+7. Upload the same artifacts to PyPI.
+8. Install from PyPI in a clean environment.
 
 Example TestPyPI install check:
 
@@ -813,7 +825,7 @@ python -m venv /tmp/skycat-testpypi
 /tmp/skycat-testpypi/bin/python -m pip install \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  skycat==0.1.4
+  skycat==0.1.5
 /tmp/skycat-testpypi/bin/skycat --help
 ```
 
@@ -821,7 +833,7 @@ Example PyPI install check:
 
 ```bash
 python -m venv /tmp/skycat-pypi
-/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.4
+/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.5
 /tmp/skycat-pypi/bin/skycat --help
 ```
 
@@ -972,8 +984,9 @@ wheel/sdist contents, artifact tests, versioning, and release automation.
 - `twine >= 6.0` is part of the `dev` extra and lockfile.
 - CI package-build runs `twine check --strict dist/*`.
 - Release build runs `twine check --strict dist/*`.
-- `release.yml` has manual-dispatch `testpypi-publish` and `pypi-publish`
-  jobs that download `release-dists` and do not rebuild artifacts.
+- `release.yml` publishes to TestPyPI automatically on release tags, validates
+  TestPyPI through machine-readable APIs and install checks, and queues the
+  real PyPI upload behind the protected `pypi` environment.
 - Only the PyPI/TestPyPI jobs receive job-level `id-token: write`.
 - Release and CI docs explain the required Trusted Publisher and GitHub
   environment setup.
@@ -1021,7 +1034,7 @@ This is illustrative, not a patch.
 ```toml
 [project]
 name = "skycat"
-version = "0.1.4"
+version = "0.1.5"
 description = "Build and query versioned local PostgreSQL/PostGIS databases from astronomical reference catalogs."
 readme = "README.md"
 requires-python = ">=3.11, <3.14"

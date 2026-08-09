@@ -1,6 +1,6 @@
 [project]
 name = "skycat"
-version = "0.1.4"
+version = "0.1.5"
 description = "Skycat: build and query versioned local PostgreSQL/PostGIS databases from VizieR/CDS-style astronomical reference catalogs."
 readme = "README.md"
 requires-python = ">=3.11, <3.14"

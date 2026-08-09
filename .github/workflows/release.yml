@@ -170,7 +170,7 @@ jobs:
     name: publish draft GitHub Release
     runs-on: ubuntu-latest
     needs: release-build
-    if: github.event_name == 'push' || inputs.publish_github_release
+    if: github.event_name == 'push' || inputs.publish_github_release || inputs.publish_to_pypi
     environment: github-release
     permissions:
       contents: write
@@ -195,7 +195,7 @@ jobs:
     name: publish distributions to TestPyPI
     runs-on: ubuntu-latest
     needs: release-build
-    if: github.event_name == 'push' || inputs.publish_to_testpypi
+    if: github.event_name == 'push' || inputs.publish_to_testpypi || inputs.publish_to_pypi
     environment:
       name: testpypi
       url: https://test.pypi.org/p/skycat
@@ -213,35 +213,46 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
           print-hash: true
+          skip-existing: true
 
   testpypi-validation:
-    name: validate TestPyPI release
+    name: validate TestPyPI artifact and metadata
     runs-on: ubuntu-latest
     needs:
       - release-build
       - testpypi-publish
-    if: github.event_name == 'push' || inputs.publish_to_testpypi
+    if: github.event_name == 'push' || inputs.publish_to_testpypi || inputs.publish_to_pypi
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-build.outputs.release-tag }}
           persist-credentials: false
 
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: release-dists
+          path: dist/
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Validate TestPyPI install and rendered page
+      - name: Validate TestPyPI artifact, metadata, and install
         run: python .github/scripts/validate_testpypi_release.py
         env:
           RELEASE_VERSION: ${{ needs.release-build.outputs.release-version }}
+          DIST_DIR: dist
 
   pypi-publish:
     name: publish distributions to PyPI
     runs-on: ubuntu-latest
-    needs: release-build
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_to_pypi
+    needs:
+      - release-build
+      - github-release
+      - testpypi-validation
+    if: github.event_name == 'push' || inputs.publish_to_pypi
     environment:
       name: pypi
       url: https://pypi.org/p/skycat
@@ -259,16 +270,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Validate TestPyPI before PyPI upload
-        run: python .github/scripts/validate_testpypi_release.py
-        env:
-          RELEASE_VERSION: ${{ needs.release-build.outputs.release-version }}
-
       - name: Download distributions
         uses: actions/download-artifact@v8
         with:
           name: release-dists
           path: dist/
+
+      - name: Validate TestPyPI before PyPI upload
+        run: python .github/scripts/validate_testpypi_release.py
+        env:
+          RELEASE_VERSION: ${{ needs.release-build.outputs.release-version }}
+          DIST_DIR: dist
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@v1.14.1
