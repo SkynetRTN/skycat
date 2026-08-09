@@ -641,8 +641,10 @@ def import_release(
             note="detached build; the current partition keeps serving reads",
         )
 
-        # Phase B1 — transform + index + validate the detached replacement. Takes
-        # no lock on the partition parent (only the new standalone table).
+        # Phase B1 — transform + index + validate the detached replacement. The
+        # CREATE TABLE ... LIKE reads the parent definition under ACCESS SHARE,
+        # which does not block ordinary readers; the heavy work is on the new
+        # standalone table.
         with engine.begin() as conn:
             # Clear any leftover build from a crashed prior run before rebuilding.
             conn.execute(text(f"DROP TABLE IF EXISTS {incoming_fqn}"))

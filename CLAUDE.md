@@ -74,16 +74,19 @@ scientifically typed table and parser — never a universal row table. Per-relea
 `extra` JSONB, not new columns.
 
 **Releases are a deployment mechanism, not a science dimension.** One active release per family
-(partial unique index). `CatalogReleaseState` walks REGISTERED → STAGING → READY → ACTIVE, with
-FAILED/SUPERSEDED as the branches. A failed or incomplete release can never auto-activate.
+(partial unique index). Current imports write REGISTERED/FAILED → READY → ACTIVE, ACTIVE replace
+as an ACTIVE self-loop, and failed replaces of built READY/SUPERSEDED releases leave that state
+unchanged. `STAGING` is legacy vocabulary for old stranded rows, not a state the runner now
+assigns. A failed or incomplete release can never auto-activate.
 
 **Ingestion (`skycat/ingestion/runner.py`)** is the most subtle file in the repo. Phase A streams
 parser rows via COPY into unlogged staging and validates there. Phase B1 builds a *detached*
-standalone table (transform → PK → replicated parent indexes → ANALYZE → validate), taking no lock
-on the partition parent during the multi-minute rebuild. Phase B2 is a short transaction: drop the
-old partition, rename, `ATTACH PARTITION`. Preserve those properties when editing — the old release
-must keep serving reads until the atomic swap, and a `--replace` of the ACTIVE release stays ACTIVE
-throughout. Registry/run rows are written on a separate connection so failures are always recorded.
+standalone table (transform → PK → replicated parent indexes → ANALYZE → validate). Creating that
+table from the parent takes ACCESS SHARE on the parent, which does not block ordinary readers; Phase
+B2 is the short ACCESS EXCLUSIVE transaction: drop the old partition, rename, `ATTACH PARTITION`.
+Preserve those properties when editing — the old release must keep serving reads until the atomic
+swap, and a `--replace` of the ACTIVE release stays ACTIVE throughout. Registry/run rows are written
+on a separate connection so failures are always recorded.
 
 **Query path (`skycat/query/`)** never filters spatially in Python. Cone search uses
 `ST_DWithin`/`ST_Distance` on the GiST-indexed generated `geom geography(Point,4326)` column with

@@ -18,6 +18,12 @@ CRITICAL = "critical"
 WARNING = "warning"
 INFO = "info"
 
+#: Coordinate rejects are expected at low rates in real upstream catalogs, but a
+#: large rejected fraction is the signature of a wrong file, shifted columns, or
+#: changed upstream format. Kept above the committed six-row APASS fixture's
+#: 1/7 rejected coordinate row, and below a source where bad rows are common.
+REJECT_RATE_MAX_FRACTION = 0.2
+
 
 @dataclass
 class Check:
@@ -55,26 +61,37 @@ def validate_staging_common(conn: Connection, staging_fqn: str) -> tuple[list[Ch
     checks.append(Check("native_id_not_null", CRITICAL, null_ids == 0,
                         f"{null_ids} rows with null/empty native_id"))
 
-    # RA range (critical).
+    # RA range (warning). Bad coordinates are rejected before production, so the
+    # rows are not lost; the warning is what blocks auto-activation unless the
+    # operator explicitly allows it.
     conn.execute(text(
         f"UPDATE {staging_fqn} SET reject_reason = 'ra_out_of_range' "
         f"WHERE reject_reason IS NULL AND (ra_deg IS NULL OR ra_deg < 0 OR ra_deg >= 360)"
     ))
     bad_ra = _count(conn, f"SELECT count(*) FROM {staging_fqn} WHERE reject_reason = 'ra_out_of_range'")
-    checks.append(Check("ra_range", CRITICAL, True,
+    checks.append(Check("ra_range", WARNING, bad_ra == 0,
                         f"{bad_ra} rows with RA outside [0,360) rejected"))
 
-    # Dec range (critical).
+    # Dec range (warning), for the same reason as RA.
     conn.execute(text(
         f"UPDATE {staging_fqn} SET reject_reason = 'dec_out_of_range' "
         f"WHERE reject_reason IS NULL AND (dec_deg IS NULL OR dec_deg < -90 OR dec_deg > 90)"
     ))
     bad_dec = _count(conn, f"SELECT count(*) FROM {staging_fqn} WHERE reject_reason = 'dec_out_of_range'")
-    checks.append(Check("dec_range", CRITICAL, True,
+    checks.append(Check("dec_range", WARNING, bad_dec == 0,
                         f"{bad_dec} rows with Dec outside [-90,90] rejected"))
 
     valid = _count(conn, f"SELECT count(*) FROM {staging_fqn} WHERE reject_reason IS NULL")
     rejected = _count(conn, f"SELECT count(*) FROM {staging_fqn} WHERE reject_reason IS NOT NULL")
+    total = valid + rejected
+    reject_rate = rejected / total if total else 0.0
+    checks.append(Check(
+        "reject_rate",
+        WARNING,
+        reject_rate <= REJECT_RATE_MAX_FRACTION,
+        f"{rejected}/{total} rows rejected ({reject_rate:.1%}; "
+        f"maximum {REJECT_RATE_MAX_FRACTION:.0%})",
+    ))
     checks.append(Check("loaded_row_count", INFO, valid > 0,
                         f"{valid} valid rows, {rejected} rejected"))
     return checks, valid, rejected

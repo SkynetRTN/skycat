@@ -147,6 +147,8 @@ index.
 - Failed or incomplete releases can never activate.
 - A gross row-count shortfall warns and blocks auto-activation unless the
   operator passes `--allow-warnings`.
+- A high rejected-row fraction, or any rejected coordinate rows, warns and
+  blocks auto-activation unless the operator passes `--allow-warnings`.
 
 Production tables are partitioned by `LIST (release_id)`. Each imported release
 gets a physical child partition such as `catalog_data.apass_source_r2`.
@@ -154,22 +156,28 @@ gets a physical child partition such as `catalog_data.apass_source_r2`.
 ```mermaid
 stateDiagram-v2
     [*] --> REGISTERED: register (first import)
-    REGISTERED --> STAGING: import starts
-    STAGING --> READY: staged, built, indexed, validated
-    STAGING --> FAILED: any error
+    REGISTERED --> READY: import succeeds
+    REGISTERED --> FAILED: import fails before a partition is built
+    FAILED --> READY: re-import succeeds
+    FAILED --> FAILED: re-import fails before a partition is built
+    READY --> READY: import --replace succeeds, or fails before the swap
     READY --> ACTIVE: activate (explicit, or --activate)
+    READY --> [*]: remove-release
+    ACTIVE --> ACTIVE: import --replace --force succeeds, or fails before the swap
     ACTIVE --> SUPERSEDED: another release activated
     SUPERSEDED --> ACTIVE: activate (rollback)
-    READY --> FAILED: re-import fails
-    FAILED --> STAGING: re-import
-    ACTIVE --> ACTIVE: import --replace --force (stays ACTIVE through the swap)
+    SUPERSEDED --> READY: import --replace succeeds
+    SUPERSEDED --> SUPERSEDED: import --replace fails before the swap
     SUPERSEDED --> [*]: remove-release
     FAILED --> [*]: remove-release
 ```
 
-The self-loop is the one worth reading twice: replacing the ACTIVE release keeps
-it ACTIVE for the whole rebuild, because the replacement is built detached and
-swapped in atomically. The family is never left without an active release.
+`STAGING` remains in the enum so older rows can still be named and repaired, but
+the current runner does not assign it; in-flight state lives on
+`ingestion_run.status`. The ACTIVE self-loop is the one worth reading twice:
+replacing the ACTIVE release keeps it ACTIVE for the whole rebuild, because the
+replacement is built detached and swapped in atomically. The family is never
+left without an active release.
 
 ## Spatial model
 
@@ -237,11 +245,13 @@ import runs:
 14. Optionally activate it explicitly or via `--activate`.
 15. Record completion or failure.
 
-Steps 8–11 are the load-bearing part: the multi-minute rebuild takes **no lock
-on the partition parent**, so the old release keeps serving reads until step 12,
-a short transaction that drops the old partition, renames, and `ATTACH
-PARTITION`s the new one. Registry and run rows are written on a separate
-connection, so a failure is always recorded.
+Steps 8–11 are the load-bearing part: the multi-minute rebuild builds an
+unattached table while the old release keeps serving reads. Creating the
+detached table from the parent takes an ACCESS SHARE lock on the parent, which
+does not block ordinary readers; step 12 is the short ACCESS EXCLUSIVE
+transaction that drops the old partition, renames, and `ATTACH PARTITION`s the
+new one. Registry and run rows are written on a separate connection, so a
+failure is always recorded.
 
 Catalog data never goes into a migration; it arrives only through ingestion.
 Where the source files come from and how a release is tied back to an upstream
