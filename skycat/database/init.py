@@ -51,7 +51,7 @@ def _bootstrap_config(settings: CatalogSettings):
         return settings.config_for(CatalogRole.BOOTSTRAP)
     if settings.admin_user:
         return settings.config_for(CatalogRole.ADMIN)
-    return settings.config_for(CatalogRole.DEFAULT)
+    return settings.config_for(CatalogRole.BOOTSTRAP)
 
 
 def initialize_catalog_database(settings: CatalogSettings) -> InitResult:

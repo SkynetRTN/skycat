@@ -38,12 +38,14 @@ from __future__ import annotations
 import logging
 import re
 import socket
+import time
 import traceback
 from dataclasses import dataclass, field, replace as dc_replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from ..config import CatalogDatabaseConfig, CatalogRole, CatalogSettings
@@ -88,6 +90,9 @@ _BUILT_STATES = (
     CatalogReleaseState.READY.value,
     CatalogReleaseState.SUPERSEDED.value,
 )
+
+B2_LOCK_MAX_ATTEMPTS = 3
+B2_LOCK_RETRY_BACKOFF_S = 0.25
 
 
 class IngestionError(RuntimeError):
@@ -168,6 +173,95 @@ def _drop_existing_partition(conn, data_table: str, release_id: int) -> None:
             text(f'ALTER TABLE {SCHEMA_DATA}."{data_table}" DETACH PARTITION {fqn}')
         )
     conn.execute(text(f"DROP TABLE IF EXISTS {fqn}"))
+
+
+def _is_lock_timeout(exc: BaseException) -> bool:
+    """Return True for PostgreSQL lock-timeout failures through SQLAlchemy."""
+    if not isinstance(exc, DBAPIError):
+        return False
+    orig = exc.orig
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate == "55P03":
+        return True
+    return "lock timeout" in str(orig).lower()
+
+
+def _set_local_lock_timeout(conn, lock_timeout_ms: int | None) -> None:
+    if lock_timeout_ms is None or lock_timeout_ms <= 0:
+        return
+    conn.execute(text(f"SET LOCAL lock_timeout = {int(lock_timeout_ms)}"))
+
+
+def _swap_partition_with_retries(
+    engine,
+    *,
+    family_slug: str,
+    release_name: str,
+    release_id: int,
+    run_id: int | None,
+    data_table: str,
+    incoming_fqn: str,
+    child: str,
+    child_fqn: str,
+    incoming_chk: str,
+    lock_timeout_ms: int | None,
+    max_attempts: int = B2_LOCK_MAX_ATTEMPTS,
+    initial_backoff_s: float = B2_LOCK_RETRY_BACKOFF_S,
+) -> None:
+    """Run Phase B2 with bounded lock waits.
+
+    A lock timeout rolls the transaction back, leaving the old partition attached
+    and the detached ``_incoming`` table available for the next attempt.
+    """
+    attempts = max(1, max_attempts)
+    backoff_s = initial_backoff_s
+    for attempt in range(1, attempts + 1):
+        try:
+            with engine.begin() as conn:
+                _set_local_lock_timeout(conn, lock_timeout_ms)
+                _drop_existing_partition(conn, data_table, release_id)
+                conn.execute(text(f'ALTER TABLE {incoming_fqn} RENAME TO "{child}"'))
+                conn.execute(
+                    text(
+                        f'ALTER TABLE {SCHEMA_DATA}."{data_table}" ATTACH PARTITION {child_fqn} '
+                        f"FOR VALUES IN ({release_id})"
+                    )
+                )
+                conn.execute(
+                    text(f'ALTER TABLE {child_fqn} DROP CONSTRAINT "{incoming_chk}"')
+                )
+            return
+        except Exception as exc:
+            if not _is_lock_timeout(exc):
+                raise
+            will_retry = attempt < attempts
+            _event(
+                "phase_b2.lock_wait",
+                level=logging.WARNING,
+                family=family_slug,
+                release=release_name,
+                release_id=release_id,
+                run_id=run_id,
+                attempt=attempt,
+                max_attempts=attempts,
+                lock_timeout_ms=lock_timeout_ms,
+                retry=will_retry,
+                backoff_s=backoff_s if will_retry else 0,
+                parent=f"{SCHEMA_DATA}.{data_table}",
+            )
+            if not will_retry:
+                timeout = (
+                    f"{lock_timeout_ms}ms"
+                    if lock_timeout_ms is not None and lock_timeout_ms > 0
+                    else "the configured interval"
+                )
+                raise IngestionError(
+                    f"Phase B2 lock timeout after {attempts} attempts on "
+                    f"{SCHEMA_DATA}.{data_table}; old partition is still serving "
+                    f"and each attempt waited at most {timeout}"
+                ) from exc
+            time.sleep(backoff_s)
+            backoff_s *= 2
 
 
 def _replicate_parent_indexes(conn, data_table: str, child: str) -> None:
@@ -601,18 +695,19 @@ def import_release(
             validation_status=summarize(prod_checks).value,
         )
 
-        with engine.begin() as conn:
-            _drop_existing_partition(conn, data_table, release_id)
-            conn.execute(text(f'ALTER TABLE {incoming_fqn} RENAME TO "{child}"'))
-            conn.execute(
-                text(
-                    f'ALTER TABLE {SCHEMA_DATA}."{data_table}" ATTACH PARTITION {child_fqn} '
-                    f"FOR VALUES IN ({release_id})"
-                )
-            )
-            conn.execute(
-                text(f'ALTER TABLE {child_fqn} DROP CONSTRAINT "{incoming_chk}"')
-            )
+        _swap_partition_with_retries(
+            engine,
+            family_slug=family_slug,
+            release_name=rel_def.name,
+            release_id=release_id,
+            run_id=run_id,
+            data_table=data_table,
+            incoming_fqn=incoming_fqn,
+            child=child,
+            child_fqn=child_fqn,
+            incoming_chk=incoming_chk,
+            lock_timeout_ms=ingest_cfg.lock_timeout_ms,
+        )
 
         _event(
             "phase_b2.swapped",

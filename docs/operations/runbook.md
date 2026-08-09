@@ -133,6 +133,7 @@ logging.getLogger("skycat.ingestion").setLevel(logging.INFO)
 | `phase_a.completed` | staging loaded and validated | `staging_table`, `parsed`, `loaded`, `rejected`, `malformed`, `validation_status` |
 | `phase_b1.started` | detached build begins | `building`, `release_id`, `run_id` |
 | `phase_b1.completed` | build indexed, analyzed, validated | `rows`, `validation_status` |
+| `phase_b2.lock_wait` | swap could not acquire the family-parent lock before `lock_timeout` | `attempt`, `max_attempts`, `lock_timeout_ms`, `retry`, `parent` |
 | `phase_b2.swapped` | partition attached | `partition` |
 | `import.completed` | release finalized | `state`, `activated`, `imported`, `rejected`, `validation_status`, `partition` |
 | `import.failed` | any failure | `error`, `run_id` |
@@ -149,6 +150,14 @@ text, so nothing is lost without a JSON formatter.
 Two gaps to know about: `phase_a.completed` fires only after the whole `COPY`
 finishes, and nothing is emitted *inside* the Phase B1 build. The events tell
 you which phase you are in, not how far through it.
+
+`phase_b2.lock_wait` means the final metadata swap was queued behind an open
+reader transaction on the family parent. Skycat sets `SET LOCAL lock_timeout`
+for that transaction only (`SKYCAT_DB_LOCK_TIMEOUT`, default 5000 ms), rolls the
+attempt back on timeout, and retries with backoff. During a retry the old
+partition remains attached and serving. If the bounded retries are exhausted,
+the import fails cleanly; closing the blocking reader and re-running the import
+will rebuild from the retained source/staging state.
 
 **3. The database, from another session.** The most reliable view, because it
 does not depend on holding the import's terminal:

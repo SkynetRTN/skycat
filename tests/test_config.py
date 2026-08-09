@@ -9,6 +9,7 @@ from skycat.config import (
     CatalogDatabaseConfig,
     CatalogRole,
     CatalogSettings,
+    DEFAULT_IMPORT_LOCK_TIMEOUT_MS,
 )
 
 
@@ -94,3 +95,64 @@ def test_role_falls_back_to_default_when_unset(monkeypatch):
     s = CatalogSettings.from_env()
     # No ADMIN creds -> falls back to the default identity.
     assert s.config_for(CatalogRole.ADMIN).user == "only_user"
+
+
+def test_generic_statement_timeout_is_reader_scoped(monkeypatch):
+    for k in list(__import__("os").environ):
+        if k.startswith("SKYCAT_DB_"):
+            monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("SKYCAT_DB_STATEMENT_TIMEOUT", "30000")
+
+    s = CatalogSettings.from_env()
+
+    assert s.config_for(CatalogRole.READER).statement_timeout_ms == 30000
+    assert s.config_for(CatalogRole.DEFAULT).statement_timeout_ms == 30000
+    assert s.config_for(CatalogRole.INGEST).statement_timeout_ms is None
+    assert s.config_for(CatalogRole.ADMIN).statement_timeout_ms is None
+    assert s.config_for(CatalogRole.BOOTSTRAP).statement_timeout_ms is None
+
+
+def test_role_specific_statement_timeout_overrides_reader_default(monkeypatch):
+    for k in list(__import__("os").environ):
+        if k.startswith("SKYCAT_DB_"):
+            monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("SKYCAT_DB_STATEMENT_TIMEOUT", "30000")
+    monkeypatch.setenv("SKYCAT_DB_READER_STATEMENT_TIMEOUT", "15000")
+    monkeypatch.setenv("SKYCAT_DB_INGEST_STATEMENT_TIMEOUT", "900000")
+
+    s = CatalogSettings.from_env()
+
+    assert s.config_for(CatalogRole.READER).statement_timeout_ms == 15000
+    assert s.config_for(CatalogRole.DEFAULT).statement_timeout_ms == 15000
+    assert s.config_for(CatalogRole.INGEST).statement_timeout_ms == 900000
+    assert s.config_for(CatalogRole.ADMIN).statement_timeout_ms is None
+
+
+def test_import_lock_timeout_is_configured_separately(monkeypatch):
+    for k in list(__import__("os").environ):
+        if k.startswith("SKYCAT_DB_"):
+            monkeypatch.delenv(k, raising=False)
+
+    assert CatalogSettings.from_env().config_for(CatalogRole.INGEST).lock_timeout_ms == (
+        DEFAULT_IMPORT_LOCK_TIMEOUT_MS
+    )
+
+    monkeypatch.setenv("SKYCAT_DB_LOCK_TIMEOUT", "250")
+    assert CatalogSettings.from_env().config_for(CatalogRole.INGEST).lock_timeout_ms == 250
+
+
+def test_init_fallback_uses_bootstrap_timeout_semantics(monkeypatch):
+    from skycat.database.init import _bootstrap_config
+
+    for k in list(__import__("os").environ):
+        if k.startswith("SKYCAT_DB_"):
+            monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("SKYCAT_DB_USER", "single_user")
+    monkeypatch.setenv("SKYCAT_DB_PASSWORD", "single_pw")
+    monkeypatch.setenv("SKYCAT_DB_STATEMENT_TIMEOUT", "30000")
+
+    cfg = _bootstrap_config(CatalogSettings.from_env())
+
+    assert cfg.user == "single_user"
+    assert cfg.password == "single_pw"
+    assert cfg.statement_timeout_ms is None
