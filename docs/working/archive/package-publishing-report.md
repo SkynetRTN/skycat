@@ -1,45 +1,31 @@
 ---
-status: open
+status: archived
 reviewed: 2026-08-08
+archived: 2026-08-09
+completed: 2026-08-09
 branch: feature/pypi-release-readiness
 authority: code-inspection + official-docs
-implementation: github-releases-complete; pypi-workflow-in-progress
+implementation: completed; package published on PyPI
 ---
 
 # Skycat package publishing report
 
-This report describes Skycat's package publishing framework now that the first
-GitHub Release has been completed. The remaining publishing question is
-PyPI/TestPyPI readiness: what must be configured so the same tested wheel and
-source distribution can be uploaded to a Python package index without weakening
-the GitHub Release process.
+> **Archived (2026-08-09).** PyPI publishing is complete and `skycat` is now
+> available from PyPI. This report is retained as historical readiness context
+> for the first package-publishing lane, not as an active work plan.
 
-> **Status: open — this is the one package-publishing note with work still in
-> it.** The GitHub Releases side is complete for the first public artifact
-> host: `pyproject.toml` declares `GPL-3.0-only` with `license-files`,
-> `release.yml` builds and verifies the wheel and sdist and publishes a draft
-> through the protected `github-release` environment, the `Protect release tags`
-> ruleset guards the tag namespace, `docs/operations/release.md` documents the
-> process, and the README documents the supported GitHub Release install paths.
->
-> **What is actually left:** the next package-index track is PyPI/TestPyPI:
-> Trusted Publishing, GitHub environments, README rendering, first TestPyPI
-> upload, TestPyPI install checks, first PyPI upload, and PyPI install checks.
-> Live `pip index versions skycat` probes on 2026-08-08 found no matching
-> distribution on PyPI or TestPyPI, but pending publishers do not reserve a
-> project name before first upload.
-
-The body below is a current framework report plus the implementation notes for
-the `feature/pypi-release-readiness` branch.
+This report described Skycat's package publishing framework after the first
+GitHub Release and before the PyPI/TestPyPI lane was completed. The body below
+preserves the implementation notes and historical checks from the
+`feature/pypi-release-readiness` branch.
 
 ## Executive summary
 
-Skycat is packageable now under the GitHub Releases model, and the first GitHub
-Release has been completed. The repository has a draft-first release workflow, a
-protected `github-release` environment, package build and install checks, a
-GPLv3 license declaration, release documentation, and a working public artifact
-host. The next maturity step is the PyPI/TestPyPI publishing lane that reuses
-the exact same tested artifacts.
+Skycat is packageable under the GitHub Releases and PyPI models, and the first
+GitHub Release plus package-index publishing path have been completed. The
+repository has a draft-first release workflow, protected release environments,
+package build and install checks, a GPLv3 license declaration, release
+documentation, and public package artifact hosts.
 
 The repository already has the core package shape:
 
@@ -64,9 +50,9 @@ The GitHub-hosted release path is complete for the first public release:
   checks metadata with Twine, inspects archive contents, smoke-tests both
   install paths, and publishes a draft GitHub Release from the tested artifacts.
 - PyPI/TestPyPI Trusted Publishing setup, first index uploads, README rendering,
-  and install checks are now the remaining package-index blockers.
+  and install checks have since been completed.
 
-Recommended path:
+Historical recommended path:
 
 1. Keep GitHub Releases as the canonical release-note, tag, and artifact
    surface.
@@ -991,7 +977,10 @@ wheel/sdist contents, artifact tests, versioning, and release automation.
 - Release and CI docs explain the required Trusted Publisher and GitHub
   environment setup.
 
-### Blocking before PyPI/TestPyPI upload
+### Historical blockers before PyPI/TestPyPI upload
+
+These items were the pre-upload checklist when this report was active. They are
+retained to show what had to be closed before the package could be published.
 
 - Reconfirm package name availability on PyPI and TestPyPI immediately before
   first upload.
