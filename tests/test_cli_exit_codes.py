@@ -82,6 +82,20 @@ def test_successful_activation_exits_zero(run):
     assert "activated=True" in res.output
 
 
+def test_skipped_active_activation_exits_zero(run):
+    report = ImportReport(
+        **BASE,
+        state="active",
+        validation_status="passed",
+        activated=True,
+        skipped_reason="already imported (matching checksum); use --replace to force",
+    )
+    res = run(report, "import", "apass", "dr6", "--activate")
+    assert res.exit_code == 0
+    assert "activated=True" in res.output
+    assert "skipped: already imported" in res.output
+
+
 def test_import_without_activate_exits_zero(run):
     """Nothing beyond the import was asked for, and the import worked."""
     report = ImportReport(
@@ -135,7 +149,7 @@ def cli_env(monkeypatch, tmp_path):
 def test_unreachable_database_is_a_message_not_a_traceback(cli_env):
     """A stale SKYCAT_DB_PORT — the runbook's most-regretted mistake."""
     res = cli_env("releases")
-    assert res.exit_code != 0
+    assert res.exit_code == 2
     assert "Traceback" not in res.output
     assert "connection" in res.output.lower()
 
@@ -159,7 +173,7 @@ def test_bad_password_reports_the_driver_message_not_the_sql(cli_env, monkeypatc
 
     monkeypatch.setattr(cli_main, "list_releases", deny)
     res = cli_env("releases")
-    assert res.exit_code != 0
+    assert res.exit_code == 2
     assert "Traceback" not in res.output
     assert "password authentication failed" in res.output
     assert "SELECT" not in res.output

@@ -5,9 +5,10 @@
 #
 # Runs `skycat import <family> <release> --activate` as the INGEST
 # role. Records import history, validates before activation, builds a new
-# release partition, and only activates after a clean validation. Source data is
-# mounted read-only from a PVC the operator provisions + populates (the image
-# never bakes catalog datasets).
+# release partition, and only activates after a clean validation. Re-applying an
+# unchanged, already-active import exits 0; database connection/credential
+# failures exit 2. Source data is mounted read-only from a PVC the operator
+# provisions + populates (the image never bakes catalog datasets).
 apiVersion: batch/v1
 kind: Job
 metadata:

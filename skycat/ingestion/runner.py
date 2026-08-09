@@ -485,12 +485,31 @@ def import_release(
                     "already imported (matching checksum); use --replace to force"
                 )
                 report.imported = int(release.imported_row_count or 0)
+                if release.state == CatalogReleaseState.ACTIVE.value:
+                    report.activated = True
+                elif activate:
+                    if release.validation_status == ValidationStatus.FAILED.value:
+                        raise IngestionError("cannot activate: validation failed")
+                    if (
+                        release.validation_status
+                        == ValidationStatus.PASSED_WITH_WARNINGS.value
+                        and not allow_warnings
+                    ):
+                        report.skipped_reason = (
+                            "not activated: validation warnings (use --allow-warnings)"
+                        )
+                    else:
+                        activate_release(meta, release)
+                        meta.commit()
+                        report.activated = True
+                        report.state = CatalogReleaseState.ACTIVE.value
                 _event(
                     "import.skipped",
                     family=family_slug,
                     release=rel_def.name,
                     release_id=release.id,
                     state=report.state,
+                    activated=report.activated,
                     reason="unchanged_checksum",
                 )
                 return report

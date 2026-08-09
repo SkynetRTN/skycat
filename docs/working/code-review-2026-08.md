@@ -3,7 +3,7 @@ status: open
 reviewed: 2026-08-07
 branch: docs/code-review-audit
 authority: code-inspection (skycat @ 7e7cf2d, origin/dev) + ruff/pyright/pytest gates + full PostGIS suite and twelve reproductions against a throwaway PostgreSQL 16 / PostGIS 3.5 on 127.0.0.1:5435
-implementation: phases 1-3 landed 2026-08-07; phases 4-6 open
+implementation: phases 1-5 landed 2026-08-07 through 2026-08-09; phase 6 open
 ---
 
 # Skycat code review, August 2026
@@ -19,19 +19,23 @@ The gates are clean and the happy paths are correct. Every finding below is a
 failure path, and twelve of the eighteen were reproduced against a live
 database rather than inferred.
 
-> **Status: phases 1–3 landed (2026-08-07); phases 4–6 open.** Eleven findings
-> and one half-finding have been implemented. The findings below are kept
-> verbatim as the record of what was wrong; the table says where each one now
-> lives. Three were resolved differently from the suggestion, and two of the
-> review's own claims turned out to be wrong — all noted under the table.
+> **Status: phases 1–5 landed (2026-08-07 through 2026-08-09); phase 6 open.**
+> Sixteen findings have been implemented. The findings below are kept verbatim
+> as the record of what was wrong; the table says where each one now lives.
+> Three were resolved differently from the suggestion, and two of the review's
+> own claims turned out to be wrong — all noted under the table.
 >
 > | # | Finding | Phase | Where it landed |
 > |---|---|---|---|
 > | F1 | Failed `--replace` poisons the checksum | 1 | `ingestion/runner.py` — provenance writes moved into the post-swap finalize block; the attempt's provenance parked on `IngestionRun.detail` |
+> | F2 | `import --activate` fails on an already-active release | 5 | `ingestion/runner.py`, `tests/test_integration.py` — skipped ACTIVE releases report `activated=True`; skipped READY/SUPERSEDED releases activate when the validation gate permits it |
+> | F3 | Tracebacks on operator input | 2, 5 | `cli/main.py` — `_FriendlyGroup` renders operator errors without tracebacks; DB driver connection/authentication failures now map to exit code 2; `SKYCAT_DEBUG=1` restores the traceback |
 > | F6 | Failed `--replace` strands a good release | 1 | `ingestion/runner.py`, `health.py` — the STAGING demotion is gone; in-flight status keys off the `IngestionRun` row |
+> | F7 | Phase B2 can wait unboundedly for a reader lock | 4 | `ingestion/runner.py`, `config.py`, `docs/operations/runbook.md` — `SET LOCAL lock_timeout` on the swap transaction with bounded retries and operator-facing events |
+> | F8 | Reader statement timeout caps ingest and migrations | 4 | `config.py`, `database/engine.py`, `README.md` — generic `SKYCAT_DB_STATEMENT_TIMEOUT` is reader/default-scoped, with per-role overrides |
 > | F9 | Failure recorder fails silently | 1 | `ingestion/runner.py` — `_record_failure()` on an independent short-lived engine, logging `import.record_failed` at ERROR |
+> | F11 | Stale/invalid resolved releases return `[]` | 5 | `query/cone.py`, `query/crossmatch.py`, `client.py` — queryable states are enforced and supplied `ResolvedRelease` objects are rechecked against the registry |
 > | F13 | `failure_detail = None` writes JSON `null` | 1 | `models/registry.py` — `JSONB(none_as_null=True)` |
-> | F3 | Tracebacks on operator input | 2 (partial) | `cli/main.py` — `_FriendlyGroup` extended to `DBAPIError`, `ValueError`, `MissingRowError`, `PostgisUnavailableError`, `DriverConnectionError`; `SKYCAT_DEBUG=1` restores the traceback. **Exit-code taxonomy deferred to phase 5** |
 > | F5 | Special character in a password breaks `init` | 2 | `database/migrate.py` — `_ini_literal()` at the configparser boundary |
 > | F10 | Caller-input errors escape as `ValueError` | 2 | `query/cone.py`, `query/crossmatch.py` — `_validate_centre()`, `_validate_limit()`, shared `_python_type()` |
 > | F14 | DR10 parser drops non-numeric lines | 2 | `ingestion/parsers/apass.py` — explicit header recognition, everything else counted |
@@ -40,9 +44,7 @@ database rather than inferred.
 > | F15 | `remove_release` string-splits the parent | 3 | `ingestion/maintenance.py` — `inhparent::regclass` from the existing `pg_inherits` query |
 > | F17 | Dead capture group in the replicator | 3 | `ingestion/runner.py` |
 >
-> **Open.** F2, F7, F8, F11, F12, F16, and F3's exit-code taxonomy. Phases 4, 5
-> and 6 all depended on phase 1 or 2, and are now unblocked; phase 5 still needs
-> its decision record.
+> **Open.** F12 and F16. Phase 6 remains the only open implementation phase.
 >
 > **Deviations.** F5 was fixed with the one-line configparser escape rather than
 > the cleaner `cfg.attributes["connection"]` route, because `migrations/env.py`
@@ -962,13 +964,11 @@ Ranked by what a failure would cost, not by how hard the test is to write.
 
 ## 5. Action plan
 
-Six phases. Phases 1–3 carry the four remaining high-severity findings and are
-bug fixes to behaviour that is undocumented or actively contradicted by the
-docs, so none of them needs a decision record. **Phase 5 changes
-documented-stable surfaces and must carry an ADR and a docs update in the same
-commit**, per the docs-are-tested convention. Phases 1, 2 and 3 are mutually
-independent and can be worked in parallel; 4, 5 and 6 each depend on one of
-them.
+Six phases. Phases 1–3 carried the four remaining high-severity findings and
+were bug fixes to behaviour that was undocumented or actively contradicted by
+the docs, so none of them needed a decision record. **Phase 5 changed
+documented-stable surfaces and landed with ADR 0002 plus docs updates**, per
+the docs-are-tested convention. Phase 6 remains open.
 
 ```
  1 failed imports ──┬── 4 lock/timeout safety
@@ -1011,7 +1011,7 @@ with `--require-postgis`.
 ### Phase 2 — Restore the CLI error contract, minus the exit-code change (F3 partial, F5, F10, F14, F18)
 
 *Scope.* Extend `_FriendlyGroup` to the uncaught exception families, mapping
-all of them to code 1 for now (the 1-vs-2 question is phase 4). Fix the Alembic
+all of them to code 1 for now (the 1-vs-2 question landed in phase 5). Fix the Alembic
 URL escaping. Raise `CatalogQueryError` for caller-input errors in the query
 layer. Count non-numeric DR10 lines. Add the two missing docs to the doc test.
 
@@ -1062,6 +1062,8 @@ migrated database emits an empty migration and does not touch `tiger`,
 
 ### Phase 4 — Lock and timeout safety (F7, F8)
 
+**Status.** Landed on `dev` before the phase 5 pass.
+
 *Scope.* `SET LOCAL lock_timeout` plus bounded retry on the B2 transaction;
 role-scoped statement timeouts.
 
@@ -1086,8 +1088,8 @@ recorder.
 
 ### Phase 5 — Stable-surface changes (F2, F3's exit-code taxonomy, F11)
 
-**This phase changes documented-stable behaviour and needs a decision record
-plus a docs update in the same commit.** Three surfaces move:
+**Status.** Landed with [ADR 0002](../decisions/0002-explicit-stable-failures.md)
+and stable-surface docs updates. Three surfaces moved:
 
 - **Exit codes.** Connectivity and credential failures become code 2
   (configuration) instead of the accidental 1. `api-stability.md:48-54` must be
@@ -1097,7 +1099,7 @@ plus a docs update in the same commit.** Three surfaces move:
   rather than reported as a failure. This is what the contract already promises
   ("an `--activate` that exits 0 *did* activate"), so the ADR is short, but the
   table in `api-stability.md` gains a row and the runbook gains a paragraph.
-- **Query resolution.** Rejecting a STAGING/FAILED release, and re-resolving a
+- **Query resolution.** Rejecting a STAGING/FAILED release, and re-checking a
   stale cache entry rather than returning `[]`, changes what
   `CatalogReader.cone()` does for callers who currently get an empty list.
   `api-stability.md`'s "Query row dicts" section and the reader lifecycle

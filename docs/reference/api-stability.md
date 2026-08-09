@@ -23,7 +23,7 @@ path is covered by the table below or by *Internal*.
 
 | Surface | Contract |
 |---|---|
-| `from skycat import CatalogReader` | The supported read path. Constructor keywords, `from_env()`, `cone()`, `crossmatch()`, `lookup()`, `active_release()`, `invalidate()`, `close()`, context-manager use, and the meaning of each keyword argument. |
+| `from skycat import CatalogReader` | The supported read path. Constructor keywords, `from_env()`, `cone()`, `crossmatch()`, `lookup()`, `active_release()`, `invalidate()`, `close()`, context-manager use, and the meaning of each keyword argument. Query calls re-check cached release handles before using them, so a stale active-release cache raises `CatalogQueryError` instead of returning a false empty result. |
 | `skycat.__version__` | The package version, matching `pyproject.toml`. |
 | Query row dicts | Rows come back as `dict`. Documented keys keep their names, units, and meaning. **New keys may be added** — index by key, never by position, and do not assume the key set is closed. |
 | `skycat.constants` | `CatalogReleaseState`, `IngestionRunStatus`, `ValidationStatus`, `CatalogRole`, the schema names, `SRID`, and `POSTGIS_SPHERE_RADIUS_M`. New members may be added to the enums. |
@@ -35,6 +35,12 @@ remain importable and keep their signatures, but `CatalogReader` is the
 supported entry point: it is the only one that owns pooling, release caching,
 and a statement timeout. Code that calls the bare functions is responsible for
 all three.
+
+Queries are only served from queryable releases: `active`, `ready`, or
+`superseded`, with a production partition recorded. An explicit `release=...`
+that resolves to `registered`, `staging`, or `failed` raises
+`CatalogQueryError`; a supplied `ResolvedRelease` that no longer matches the
+registry raises the same type.
 
 ### CLI
 
@@ -51,7 +57,15 @@ operators are both callers that cannot be refactored by a search-and-replace.
   |---|---|
   | `0` | The command did what it said. An `--activate` that exits 0 *did* activate. |
   | `1` | Operational failure: `CatalogQueryError`, `IngestionError`, `ReleaseStateError`. Includes "imported but refused to activate" (validation warnings without `--allow-warnings`). |
-  | `2` | Configuration failure: `CatalogConfigError` — bad or missing `SKYCAT_DB_*`, a reserved database name, a production-like target without an override. |
+  | `2` | Configuration failure: `CatalogConfigError` or database-driver connection/authentication failure — bad or missing `SKYCAT_DB_*`, a stale host/port, wrong credentials, a reserved database name, or a production-like target without an override. |
+
+- **Idempotent activation.** Re-running
+  `skycat import <family> <release> --activate` against an unchanged imported
+  release exits 0 when the command's intent is already true or can be made true:
+  an already-ACTIVE release reports `activated=True`, and a matching READY or
+  SUPERSEDED release is activated when validation passed or
+  `--allow-warnings` permits warning-level validation. Validation warnings
+  without `--allow-warnings` still exit 1.
 
 - **`--json` output.** Every command accepts the group-level `--json`. Documented
   keys keep their names and types; new keys may be added. Parse defensively.

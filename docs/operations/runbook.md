@@ -61,6 +61,13 @@ swap either — its provenance, counts and state keep describing the partition o
 disk — so a failed `--replace` is a no-op on the registry as well as on the data.
 See "When an import fails" below.
 
+**`import --activate` is safe to re-apply.** If the source checksum already
+matches an imported release, Skycat does not rebuild it. An already-ACTIVE
+release reports `activated=True` and exits 0; a matching READY or SUPERSEDED
+release is activated when validation passed, or when warning-level validation is
+explicitly allowed with `--allow-warnings`. Warnings without
+`--allow-warnings` still exit 1 because the command did not activate.
+
 **`reset --force` is a development command.** It drops all three schemas
 CASCADE, which takes the Alembic version table with them, so recovery is `init`,
 `migrate`, and re-import every release. It refuses production-like targets
@@ -72,7 +79,11 @@ source files.
 **`deactivate` is not on this table but belongs in the same thought.** It moves
 the ACTIVE release to SUPERSEDED without touching a row of data. The family then
 has no active release and default queries fail until something is activated.
-Reversible with `activate`; the partition never moved.
+Reversible with `activate`; the partition never moved. Long-lived readers should
+call `CatalogReader.invalidate()` after a planned `activate`, `deactivate`, or
+`remove-release` so they pick up the change immediately. Query calls still
+re-check cached release handles before use, so missing that invalidation raises
+a clear `CatalogQueryError` rather than returning a false empty result.
 
 `docker compose down` never removes `catalog_postgres_data` — deleting the
 volume is always an explicit `docker volume rm skycat_catalog_postgres_data`.

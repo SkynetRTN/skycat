@@ -18,9 +18,10 @@ from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
 from ..config import CatalogRole, CatalogSettings
-from ..constants import SCHEMA_DATA
+from ..constants import SCHEMA_DATA, CatalogReleaseState
 from ..database.base import CatalogBase
 from ..database.engine import create_catalog_engine
+from ..models.registry import CatalogFamily, CatalogRelease
 from ..registry.catalog_defs import get_family_def
 from ..registry.releases import resolve_active_release, resolve_release
 from ..spatial import separation_deg_expr, validate_radec, within_radius
@@ -175,6 +176,79 @@ class ResolvedRelease:
     state: str
 
 
+_QUERYABLE_STATES = (
+    CatalogReleaseState.ACTIVE.value,
+    CatalogReleaseState.READY.value,
+    CatalogReleaseState.SUPERSEDED.value,
+)
+
+
+def _release_label(family_slug: str, release_name: str) -> str:
+    return f"{family_slug}/{release_name}"
+
+
+def _resolved_from_release(
+    *,
+    family_slug: str,
+    data_table: str,
+    release: CatalogRelease,
+    require_active: bool,
+) -> ResolvedRelease:
+    label = _release_label(family_slug, release.name)
+    if require_active and release.state != CatalogReleaseState.ACTIVE.value:
+        raise CatalogQueryError(
+            f"Resolved active release {label} is no longer active "
+            f"(state={release.state!r}); invalidate the reader and retry"
+        )
+    if release.state not in _QUERYABLE_STATES:
+        allowed = ", ".join(_QUERYABLE_STATES)
+        raise CatalogQueryError(
+            f"Release {label} is {release.state!r} and is not queryable; "
+            f"queryable states are: {allowed}"
+        )
+    if not release.production_table:
+        raise CatalogQueryError(f"Release {label} has no production partition to query")
+    return ResolvedRelease(
+        family_slug=family_slug,
+        data_table=data_table,
+        release_id=release.id,
+        release_name=release.name,
+        state=str(release.state),
+    )
+
+
+def validate_resolved_release_for_query(
+    session: Session,
+    resolved: ResolvedRelease,
+    *,
+    require_active: bool,
+) -> ResolvedRelease:
+    """Confirm that a cached/supplied release still matches the registry."""
+    row = session.execute(
+        select(CatalogRelease, CatalogFamily)
+        .join(CatalogFamily, CatalogRelease.family_id == CatalogFamily.id)
+        .where(CatalogRelease.id == resolved.release_id)
+        .where(CatalogFamily.slug == resolved.family_slug.lower())
+    ).one_or_none()
+    if row is None:
+        raise CatalogQueryError(
+            f"Resolved release {_release_label(resolved.family_slug, resolved.release_name)} "
+            "no longer exists; invalidate the reader and retry"
+        )
+    release, family = row
+    if release.name != resolved.release_name or family.data_table != resolved.data_table:
+        raise CatalogQueryError(
+            f"Resolved release {_release_label(resolved.family_slug, resolved.release_name)} "
+            "no longer matches the registry; invalidate the reader and retry"
+        )
+    return _resolved_from_release(
+        family_slug=family.slug,
+        data_table=family.data_table or resolved.data_table,
+        release=release,
+        require_active=require_active,
+    )
+
+
 def radius_to_deg(
     *, radius_deg: float | None = None, radius_arcmin: float | None = None,
     radius_arcsec: float | None = None,
@@ -215,9 +289,11 @@ def resolve_release_for_query(
             f"No {'matching' if release else 'active'} release for {family_slug!r}"
             + (f" ({release!r})" if release else "")
         )
-    return ResolvedRelease(
-        family_slug=family_slug, data_table=fam_def.data_table,
-        release_id=rel.id, release_name=rel.name, state=str(rel.state),
+    return _resolved_from_release(
+        family_slug=family_slug,
+        data_table=fam_def.data_table,
+        release=rel,
+        require_active=release is None,
     )
 
 
@@ -265,6 +341,11 @@ def cone_search(
         if resolved is None:
             with Session(engine) as session:
                 resolved = resolve_release_for_query(session, family_slug, release)
+        else:
+            with Session(engine) as session:
+                resolved = validate_resolved_release_for_query(
+                    session, resolved, require_active=release is None
+                )
         table = _data_table(resolved.data_table)
         out_cols = [c for c in table.c if c.name != "geom"]
         sep = separation_deg_expr(table.c.geom, ra_deg, dec_deg).label("separation_deg")
@@ -322,6 +403,11 @@ def lookup_native_id(
         if resolved is None:
             with Session(engine) as session:
                 resolved = resolve_release_for_query(session, family_slug, release)
+        else:
+            with Session(engine) as session:
+                resolved = validate_resolved_release_for_query(
+                    session, resolved, require_active=release is None
+                )
         table = _data_table(resolved.data_table)
         out_cols = [c for c in table.c if c.name != "geom"]
         stmt = (
