@@ -5,6 +5,14 @@ source-controlled summary that release notes should start from.
 
 ## Unreleased
 
+## 0.1.5 - 2026-08-08
+
+- Replaced rendered TestPyPI project-page scraping with JSON API, Simple API,
+  artifact hash, metadata, and exact TestPyPI wheel install validation.
+- Queued real PyPI publishing after the draft GitHub Release and TestPyPI
+  validation succeed, while keeping the protected `pypi` environment as the
+  manual approval gate.
+
 ## 0.1.4 - 2026-08-08
 
 - Automated TestPyPI publishing and validation on release tag pushes.

@@ -55,13 +55,13 @@ From the GitHub Release wheel:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.4/skycat-0.1.4-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.5/skycat-0.1.5-py3-none-any.whl
 ```
 
 From a Git tag:
 
 ```bash
-python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.4"
+python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.5"
 ```
 
 See
