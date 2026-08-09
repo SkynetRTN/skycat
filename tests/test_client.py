@@ -62,7 +62,7 @@ def _mutate_release(settings, family: str, name: str, action) -> None:
 
 
 def _activate(settings, family: str, name: str) -> None:
-    _mutate_release(settings, family, name, lambda session, release: activate_release(session, release))
+    _mutate_release(settings, family, name, activate_release)
 
 
 def _deactivate(settings, family: str, name: str) -> None:
