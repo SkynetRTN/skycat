@@ -53,11 +53,20 @@ DEC_MAX_DEG = 90.0
 class CatalogReleaseState(str, enum.Enum):
     """Lifecycle of a single catalog release.
 
-    The runner walks REGISTERED → STAGING → READY → ACTIVE, with FAILED and
-    SUPERSEDED as the terminal branches; these six are the whole machine. A
-    release only ever becomes ACTIVE through an explicit, atomic activation that
-    requires it to be READY (imported, transformed, indexed, validated). A
-    FAILED/incomplete release can never auto-activate.
+    The runner walks REGISTERED → READY → ACTIVE, with FAILED and SUPERSEDED as
+    the terminal branches. A release only ever becomes ACTIVE through an
+    explicit, atomic activation that requires it to be READY (imported,
+    transformed, indexed, validated). A FAILED/incomplete release can never
+    auto-activate.
+
+    STAGING is retained but **no longer assigned**. It used to be written before
+    any data work so that an in-flight import was visible, which meant a
+    ``--replace`` that failed before the swap demoted a release whose partition
+    it had never touched — and a SUPERSEDED release demoted that way could not be
+    activated again, losing the rollback path. A release's state now describes
+    the partition on disk for the whole import; "in flight" is a property of the
+    attempt and lives on ``ingestion_run.status``. The member stays so that rows
+    stranded in STAGING by an older version can still be named and repaired.
     """
 
     REGISTERED = "registered"

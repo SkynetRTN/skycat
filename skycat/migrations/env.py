@@ -28,7 +28,14 @@ import skycat.models  # noqa: F401
 config = context.config
 if config.config_file_name is not None:
     try:
-        fileConfig(config.config_file_name)
+        # disable_existing_loggers=False, unlike Alembic's generated template.
+        # The default is True, and it does not mean "reset the ini's loggers" —
+        # it disables *every* logger already created in the process. In a
+        # long-lived process that migrates and then imports (the test fixture,
+        # and any service that calls `initialize_catalog_database`), that
+        # silences `skycat.ingestion` for the rest of its life, taking the
+        # structured phase events and the failure recorder's ERROR with it.
+        fileConfig(config.config_file_name, disable_existing_loggers=False)
     except Exception:  # pragma: no cover - logging is best-effort
         pass
 

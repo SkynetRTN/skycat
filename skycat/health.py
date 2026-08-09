@@ -19,14 +19,23 @@ from .constants import (
     FORBIDDEN_DATABASE_NAMES,
     SCHEMA_DATA,
     SCHEMA_REGISTRY,
-    CatalogReleaseState,
+    IngestionRunStatus,
 )
 from .database.engine import create_catalog_engine
 from .database.migrate import current_revision, script_heads
 from .database.roles import roles_present
 from .registry.catalog_defs import CATALOG_FAMILIES
 
-_TRANSIENT_STATES = (CatalogReleaseState.STAGING.value,)
+#: An import in flight is a property of the *attempt*, not of the release: the
+#: runner deliberately leaves the release row describing the partition on disk
+#: for the whole import, so that a failure before the swap cannot demote a
+#: release whose data was never touched (see ingestion/runner.py). The
+#: ingestion_run row is per-attempt and carries the status this keys on.
+_IN_FLIGHT_RUN_STATUS = IngestionRunStatus.RUNNING.value
+
+#: A run still RUNNING after this long is stranded, not slow — an APASS DR10
+#: import is hours, not a shift.
+STUCK_IMPORT_AFTER = timedelta(hours=6)
 
 
 @dataclass
@@ -130,12 +139,12 @@ def health_report(
                                f"{slug} active={name} table={prod} exists={exists}")
 
                 # stuck imports
-                cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
+                cutoff = datetime.now(timezone.utc) - STUCK_IMPORT_AFTER
                 stuck = conn.execute(text(
-                    f"SELECT count(*) FROM {SCHEMA_REGISTRY}.catalog_release "
-                    f"WHERE state = ANY(:s) AND import_started_at < :c"
-                ), {"s": list(_TRANSIENT_STATES), "c": cutoff}).scalar() or 0
-                report.add("no_stuck_imports", stuck == 0, f"{stuck} releases stuck >6h")
+                    f"SELECT count(*) FROM {SCHEMA_REGISTRY}.ingestion_run "
+                    f"WHERE status = :s AND started_at < :c"
+                ), {"s": _IN_FLIGHT_RUN_STATUS, "c": cutoff}).scalar() or 0
+                report.add("no_stuck_imports", stuck == 0, f"{stuck} imports running >6h")
 
                 if family:
                     active = conn.execute(text(

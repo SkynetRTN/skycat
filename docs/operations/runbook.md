@@ -21,7 +21,7 @@ Read down the column for the command you are about to run:
 | Retained `*_rejects` tables | **dropped, all** | untouched | its own recreated | **dropped (schema)** | gone |
 | Production partitions | untouched | **that release's, dropped** | **that release's, replaced** | **all dropped** | gone |
 | Other releases' partitions | untouched | untouched | untouched | **all dropped** | gone |
-| `catalog_release` rows | untouched | **that one, deleted** | that one, updated | **all dropped** | gone |
+| `catalog_release` rows | untouched | **that one, deleted** | that one, updated once the swap succeeds | **all dropped** | gone |
 | `ingestion_run` / `validation_summary` | untouched | **that release's, cascade-deleted** | new rows added | **all dropped** | gone |
 | `catalog_family` rows | untouched | untouched | that one, updated | **all dropped** | gone |
 | Alembic version table | untouched | untouched | untouched | **dropped** | gone |
@@ -56,7 +56,10 @@ anywhere before the swap leaves the previous partition in place and still
 serving. After the swap the old partition is gone — a "rollback" means importing
 the old source again. `--force` is additionally required when the release is
 ACTIVE, and such an import *stays* ACTIVE throughout: there is no window where
-the family has no active release.
+the family has no active release. The registry row is not touched before the
+swap either — its provenance, counts and state keep describing the partition on
+disk — so a failed `--replace` is a no-op on the registry as well as on the data.
+See "When an import fails" below.
 
 **`reset --force` is a development command.** It drops all three schemas
 CASCADE, which takes the Alembic version table with them, so recovery is `init`,
@@ -133,6 +136,12 @@ logging.getLogger("skycat.ingestion").setLevel(logging.INFO)
 | `phase_b2.swapped` | partition attached | `partition` |
 | `import.completed` | release finalized | `state`, `activated`, `imported`, `rejected`, `validation_status`, `partition` |
 | `import.failed` | any failure | `error`, `run_id` |
+| `import.record_failed` | **ERROR** — the failure recorder could not write | `error`, `run_id` |
+
+`import.record_failed` is the only ERROR in the table and the only event that
+means something is missing from the database rather than describing something in
+it: the import failed *and* the attempt to record that failure also failed, so
+the registry does not know. See "When an import fails" below.
 
 With a plain `logging.basicConfig()` the same fields render into the message
 text, so nothing is lost without a JSON formatter.
@@ -146,11 +155,12 @@ does not depend on holding the import's terminal:
 
 ```sql
 -- Which imports are in flight, and since when
-SELECT f.slug, r.name, r.state, r.import_started_at,
-       now() - r.import_started_at AS elapsed
-FROM catalog_registry.catalog_release r
+SELECT f.slug, r.name, r.state AS release_state, ir.stage, ir.started_at,
+       now() - ir.started_at AS elapsed
+FROM catalog_registry.ingestion_run ir
+JOIN catalog_registry.catalog_release r ON r.id = ir.release_id
 JOIN catalog_registry.catalog_family f ON f.id = r.family_id
-WHERE r.state = 'staging';
+WHERE ir.status = 'running';
 
 -- Rows landed in staging so far (Phase A progress, exact)
 SELECT count(*) FROM catalog_staging.apass_dr10_stg;
@@ -166,13 +176,21 @@ WHERE datname = 'catalogs' AND state <> 'idle'
 ORDER BY query_start;
 ```
 
+**Query the run, not the release.** A release's `state` describes the partition
+that is on disk, for the whole import: a `--replace` of the ACTIVE release reads
+`active` throughout (it is still serving its old partition), and a `--replace` of
+a SUPERSEDED one reads `superseded`. That is deliberate — it is what keeps a
+failed rebuild from demoting a release whose data it never touched — and it means
+the release row is not where an in-flight import shows up. `ingestion_run` is
+per-attempt: `status = 'running'` with the phase in `stage`.
+
 The staging table is named `<family>_<release>_stg`, lowercased with
 non-alphanumerics replaced by `_`; the build table is
 `<parent>_r<release_id>_incoming`. Both are visible to `catalog_reader` only for
 `catalog_data`; reading `catalog_staging` needs the ingest role.
 
-An import that has been in `staging` for more than six hours is reported by
-`skycat health` as a failed `no_stuck_imports` check.
+An ingestion run still `running` after six hours is reported by `skycat health`
+as a failed `no_stuck_imports` check.
 
 **Afterwards**, the record is in the registry:
 
@@ -193,16 +211,74 @@ ORDER BY started_at DESC LIMIT 1;
 
 ### When an import fails
 
-The release is marked FAILED with the error and a truncated traceback in
-`failure_detail`, the run row records the same, and — this is the part that
-matters — **staging is left behind on purpose**. Phase A commits before the
-transform runs, so the loaded rows and the retained `*_rejects` table survive a
-Phase B failure and can be queried directly. Do not run `clean-staging` until
-you have finished diagnosing.
+**Staging is left behind on purpose.** Phase A commits before the transform
+runs, so the loaded rows and the retained `*_rejects` table survive a Phase B
+failure and can be queried directly. Do not run `clean-staging` until you have
+finished diagnosing.
 
-A FAILED release cannot activate, and if the failed import was a `--replace` of
-an ACTIVE release, that release is **still ACTIVE and still serving its old
-partition**. Nothing is degraded; the rebuild simply did not happen.
+**The release keeps describing what is on disk.** Source location, checksum,
+size, expected and imported row counts, `production_table` and
+`import_started_at` are written only after the Phase B2 swap succeeds. A failed
+`--replace` therefore leaves every one of them describing the partition that is
+still serving, so the provenance query in
+[provenance.md](../guides/provenance.md) stays true through a failure, and a
+re-import of the *changed* source is not mistaken for a no-op. (Idempotency keys
+on `source_checksum`, so a checksum on the row is by construction one that was
+successfully imported.)
+
+**The release's state moves only if there was nothing behind it.** A release
+that already had a built partition — ACTIVE, READY or SUPERSEDED — comes out of a
+failed import in the state it went in. Phase B1 builds detached, so that
+partition was never touched: an ACTIVE release is still serving it and a
+SUPERSEDED one can still be activated for rollback. Only a release with nothing
+built (REGISTERED, or a previous FAILED) is marked FAILED, and a FAILED release
+cannot activate. Nothing is degraded; the rebuild simply did not happen.
+
+**What is recorded, and where:**
+
+| | Written | Notes |
+|---|---|---|
+| `ingestion_run.status` | `failed` | Per-attempt. Always the first place to look. |
+| `ingestion_run.message` | the error | |
+| `ingestion_run.detail` | error, truncated traceback, and the attempted source's location / checksum / size / mode | The only record of which tree the failed attempt was reading |
+| `catalog_release.failure_detail` | the same error and traceback | Set on every failure, including one that left the state alone |
+| `catalog_release.state` | `failed` **only** if nothing was built | See above |
+
+```sql
+-- Releases with a recorded failure. `failure_detail` is a real SQL NULL after a
+-- clean import, so this predicate means what it says.
+SELECT f.slug, r.name, r.state, r.failure_detail ->> 'error' AS error
+FROM catalog_registry.catalog_release r
+JOIN catalog_registry.catalog_family f ON f.id = r.family_id
+WHERE r.failure_detail IS NOT NULL;
+```
+
+On a database written by a version before this behaviour existed, clearing the
+field stored the JSON scalar `'null'` rather than SQL NULL, so the predicate
+above matched every release that had ever been imported. No migration corrects
+those rows; either add `AND r.failure_detail IS DISTINCT FROM 'null'::jsonb` to
+the predicate, or clean them once:
+
+```sql
+UPDATE catalog_registry.catalog_release
+   SET failure_detail = NULL
+ WHERE failure_detail = 'null'::jsonb;
+```
+
+The same vintage could strand a release in `staging` — the state an import used
+to take before touching any data. Nothing assigns it now, and `activate` refuses
+it. If the release's partition is intact (`SELECT count(*)` on its
+`production_table`), the repair is a one-off `UPDATE ... SET state = 'superseded'`;
+otherwise re-import it.
+
+**If the failure recorder itself fails**, none of the above is written and the
+run row stays `running`. That is what the `import.record_failed` ERROR on the
+`skycat.ingestion` logger is for — it carries the recorder's own exception. The
+recorder connects independently of the loader (its own short-lived engine, no
+statement timeout, `pool_pre_ping` on), so this needs the database itself to be
+unreachable or the ingest credentials to have stopped working, not merely the
+condition that killed the import. `skycat health`'s `no_stuck_imports` check is
+the backstop, and it waits six hours.
 
 ## Rotating credentials
 
@@ -248,9 +324,13 @@ Per-role notes:
   or let the pools recycle. Confirm with `skycat health`, which reports
   `credentials_accepted` for the identity it connected as.
 - **`catalog_ingest`.** Rotating mid-import breaks the import at its next
-  connection — and the runner deliberately uses a *separate* connection for
-  registry bookkeeping, so a rotation can break the failure recorder as well as
-  the loader. Check for in-flight imports first (`state = 'staging'`, above).
+  connection. The failure recorder then builds its *own* engine from the same
+  environment, so it survives anything that was specific to the loader's
+  connection — but not a password the running process still holds a stale copy
+  of, which breaks both. When that happens it says so: an `import.record_failed`
+  ERROR on the `skycat.ingestion` logger, and a run row left `running` for
+  `no_stuck_imports` to find. Check for in-flight imports first
+  (`status = 'running'`, above).
 - **`catalog_owner`.** Owns every object. Rotating it is safe outside a
   migration; rotating it *during* one risks a half-applied migration, which is
   the worst state in this system.
