@@ -191,9 +191,11 @@ def _replicate_parent_indexes(conn, data_table: str, child: str) -> None:
     for indexname, indexdef in rows:
         # Drop the explicit (parent) index name first so the child index
         # auto-names and we don't collide with the parent index name.
+        # pg_get_indexdef emits "CREATE [UNIQUE] INDEX <name> ON ..." — UNIQUE
+        # comes before INDEX, so only the name is between INDEX and ON.
         ddl = re.sub(
-            r'\bINDEX\s+(UNIQUE\s+)?"?' + re.escape(indexname) + r'"?\s+ON',
-            lambda m: f"INDEX {m.group(1) or ''}ON",
+            r'\bINDEX\s+"?' + re.escape(indexname) + r'"?\s+ON',
+            "INDEX ON",
             indexdef,
         )
         # Retarget from the (partitioned) parent — pg_get_indexdef emits

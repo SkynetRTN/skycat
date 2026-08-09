@@ -16,7 +16,7 @@ every queryable field is a typed column. Release-partitioned like APASS/VSX
 
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Double, Integer, Sequence, String
+from sqlalchemy import BigInteger, Double, Index, Integer, Sequence, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,10 +31,16 @@ class LandoltSource(CatalogBase):
     """A single Landolt standard star (release-partitioned: 1992 / 2009)."""
 
     __tablename__ = "landolt_source"
-    __table_args__ = {
-        "schema": SCHEMA_DATA,
-        "postgresql_partition_by": "LIST (release_id)",
-    }
+    # Declared, not created, from here — see the note in ``models/apass.py``.
+    # Names must match ``migrations/versions/0004_landolt.py``.
+    __table_args__ = (
+        Index("ix_landolt_source_geom", "geom", postgresql_using="gist"),
+        Index("ix_landolt_source_native_id", "native_id"),
+        {
+            "schema": SCHEMA_DATA,
+            "postgresql_partition_by": "LIST (release_id)",
+        },
+    )
 
     release_id: Mapped[int] = mapped_column(Integer, primary_key=True, nullable=False)
     id: Mapped[int] = mapped_column(
