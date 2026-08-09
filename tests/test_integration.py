@@ -8,9 +8,13 @@ reachable catalog PostGIS database (skipped otherwise — see conftest).
 
 from __future__ import annotations
 
+from importlib import import_module
+
 import pytest
+from click.testing import CliRunner
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
+from sqlalchemy.orm import Session
 
 from skycat.config import CatalogConfigError, CatalogRole
 from skycat.constants import ALL_SCHEMAS
@@ -26,6 +30,7 @@ from skycat.query import (
     lookup_native_id,
 )
 from skycat.spatial import angular_separation_deg
+from skycat.registry import activate_release, resolve_release
 
 pytestmark = pytest.mark.postgis
 
@@ -34,6 +39,46 @@ def _reader(settings):
     return create_catalog_engine(
         settings.config_for(CatalogRole.READER), pool_size=1, max_overflow=0
     )
+
+
+def _ingest(settings):
+    return create_catalog_engine(
+        settings.config_for(CatalogRole.INGEST), pool_size=1, max_overflow=0
+    )
+
+
+def _activate(settings, family: str, name: str) -> None:
+    eng = _ingest(settings)
+    try:
+        with Session(eng) as session:
+            rel = resolve_release(session, family, name)
+            assert rel is not None
+            activate_release(session, rel)
+            session.commit()
+    finally:
+        eng.dispose()
+
+
+def _release_state(settings, family: str, name: str) -> str:
+    eng = _reader(settings)
+    try:
+        with eng.connect() as conn:
+            return conn.execute(
+                text(
+                    "SELECT r.state FROM catalog_registry.catalog_release r "
+                    "JOIN catalog_registry.catalog_family f ON f.id = r.family_id "
+                    "WHERE f.slug = :family AND r.name = :name"
+                ),
+                {"family": family, "name": name},
+            ).scalar_one()
+    finally:
+        eng.dispose()
+
+
+def _invoke_cli(settings, monkeypatch, *args):
+    cli_main = import_module("skycat.cli.main")
+    monkeypatch.setattr(cli_main, "load_settings", lambda: settings)
+    return CliRunner().invoke(cli_main.main, list(args), catch_exceptions=False)
 
 
 def test_schemas_and_postgis(imported):
@@ -85,6 +130,40 @@ def test_cone_active_and_explicit_release(imported):
         imported, "apass", 0.000236, 1.886943, radius_deg=0.1, release="DR6"
     )
     assert any(r["native_id"] == "0020120136" for r in dr6)
+
+
+def test_import_activate_on_already_active_skip_exits_zero(imported, monkeypatch):
+    _activate(imported, "apass", "DR10")
+
+    res = _invoke_cli(imported, monkeypatch, "import", "apass", "dr10", "--activate")
+
+    assert res.exit_code == 0, res.output
+    assert "activated=True" in res.output
+    assert "skipped: already imported" in res.output
+    assert _release_state(imported, "apass", "DR10") == "active"
+
+
+def test_import_activate_on_skipped_ready_release_activates(imported, monkeypatch):
+    _activate(imported, "apass", "DR10")
+    import_release(imported, "apass", "dr6", replace=True, force=True)
+    assert _release_state(imported, "apass", "DR6") == "ready"
+
+    try:
+        res = _invoke_cli(
+            imported,
+            monkeypatch,
+            "import",
+            "apass",
+            "dr6",
+            "--activate",
+            "--allow-warnings",
+        )
+        assert res.exit_code == 0, res.output
+        assert "activated=True" in res.output
+        assert "skipped: already imported" in res.output
+        assert _release_state(imported, "apass", "DR6") == "active"
+    finally:
+        _activate(imported, "apass", "DR10")
 
 
 def test_cone_ra_wraparound(imported):

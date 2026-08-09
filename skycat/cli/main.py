@@ -123,12 +123,9 @@ class _FriendlyGroup(click.Group):
     CSV. Each of those printed thirty lines of Python at whoever was reading a
     Kubernetes Job log. ``SKYCAT_DEBUG=1`` puts the traceback back.
 
-    **Exit codes are unchanged by the widening.** Everything here is code 1
-    except ``CatalogConfigError``, which keeps its 2. Reclassifying connectivity
-    and credential failures as *configuration* failures is a change to a
-    documented-stable surface (``docs/reference/api-stability.md``) that the
-    ingest Job reads, so it carries its own decision record rather than riding
-    along with a bug fix.
+    Database-driver failures are configuration exits: a wrong host, stale port,
+    rotated password, or unavailable server is not an import/query outcome. The
+    remaining translated exceptions are operational exits.
     """
 
     def invoke(self, ctx: click.Context):
@@ -141,10 +138,9 @@ class _FriendlyGroup(click.Group):
         except CatalogConfigError as exc:
             raise _ConfigException(str(exc)) from exc
         except DBAPIError as exc:
-            # Wrong port, wrong password, server down (OperationalError); a lost
-            # activate race (IntegrityError); a type the database refused
-            # (DataError, ProgrammingError). All of them arrive here wrapped.
-            raise click.ClickException(f"database error: {_driver_message(exc)}") from exc
+            # Wrong port, wrong password, server down: the driver is the first
+            # layer that can prove the resolved database configuration is bad.
+            raise _ConfigException(f"database error: {_driver_message(exc)}") from exc
         except _OPERATIONAL_ERRORS as exc:
             # Unknown family/column, no active release, a missing source file, a
             # failed import, an illegal state transition, a row that vanished

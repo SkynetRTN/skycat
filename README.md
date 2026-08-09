@@ -134,7 +134,10 @@ skycat lookup apass 090-0000001
 ## Python API
 
 Use `CatalogReader` for application reads. It owns connection pooling, active
-release caching, and a default statement timeout.
+release caching, and a default statement timeout. Query calls re-check a cached
+release against the registry before using it, so a release removed, failed, or
+deactivated behind a long-lived reader raises `CatalogQueryError` instead of
+looking like an empty cone.
 
 ```python
 from skycat import CatalogReader
@@ -170,6 +173,11 @@ release for parity checks, rollback, or reproducibility.
 Imports stage rows, validate them, build production partitions, mark releases
 ready, and activate only when explicitly requested. A failed import should not
 degrade the currently active release.
+
+Re-running `skycat import <family> <release> --activate` is idempotent for an
+unchanged imported release: if it is already ACTIVE the command exits 0, and if
+it is READY or SUPERSEDED the command activates it when the validation gate
+allows activation.
 
 The full architecture is documented in
 [docs/reference/architecture.md](https://github.com/SkynetRTN/skycat/blob/main/docs/reference/architecture.md),
