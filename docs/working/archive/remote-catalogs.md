@@ -1,44 +1,45 @@
 ---
-status: open
+status: archived
 reviewed: 2026-08-07
+archived: 2026-08-09
+deprecated: 2026-08-09
 branch: docs/catalog-coverage-split
 authority: service documentation (CDS/SIMBAD, IPAC/NED, CfA/ADS, astroquery) + code inspection (skycat @ 2c36084, skynet @ 0040c28ab, afterglow-core @ 92aaf61)
-implementation: not-started
-document-type: research survey — inputs for a future design, not a design
+implementation: abandoned
+document-type: deprecated research survey - historical context only
 ---
 
 # Remote catalog services — how to define and serve providers
 
-**What this document is.** A survey of the astronomical data services Skycat
+> **Deprecated (2026-08-09).** Skycat will not add remote catalog support. This
+> note is archived as historical research only; do not use it as implementation
+> guidance. Supported catalog families should be implemented as local
+> PostgreSQL/PostGIS-backed catalogs.
+
+**What this document was.** A survey of the astronomical data services Skycat
 would query through a remote catalog surface: what each one is, what question it
 answers, how it is accessed, how a remote provider is defined, what it costs
 operationally, and whether Skycat should support it. The framing assumption is
-now explicit: **remote catalogs are their own implementation track.** A remote
-catalog may share a human name with a local mirror, but local availability does
-not gate, require or shape the remote provider definition.
+now obsolete: remote catalogs are no longer a Skycat implementation track.
 
-**What this document is not.** It is not a design or an architecture decision
-record. It proposes no classes, signatures, module layouts or phases. Where it
-states a requirement, it is because the survey turned up a constraint — an
-existing contract, a service limit, a failure mode already observed in production
-— that any design will have to answer. A design agent should be able to read this
-plus [local-catalogs.md](local-catalogs.md) and have the material to plan the
-work.
+**What this document is not.** It is not current design guidance and should not
+drive classes, signatures, module layouts or phases. The active catalog planning
+document is [local-catalogs.md](../local-catalogs.md).
 
-**Companion:** [local-catalogs.md](local-catalogs.md) surveys the sources that
-can be mirrored, sizes them against a 12 TB budget, and says where to download
-them. The split is intentional. Local catalog work and remote catalog work should
-be planned, implemented and evaluated separately; neither document is a fallback
-plan for the other.
+**Current direction:** [local-catalogs.md](../local-catalogs.md) surveys the
+sources that can be mirrored, sizes them against a 12 TB budget, and says where
+to download them. Catalog support in Skycat means local PostgreSQL/PostGIS
+support, not live remote service queries.
 
-## The one position that is not open
+## Former position from the abandoned plan
 
-**`CatalogReader` stays strictly local PostgreSQL/PostGIS, and any remote access
-lives in a separate, adjacent surface** — working name `RemoteCatalogReader`. Not
-a mode, not a fallback, not a flag on the existing class.
+The former plan said **`CatalogReader` stays strictly local PostgreSQL/PostGIS,
+and any remote access lives in a separate, adjacent surface** — working name
+`RemoteCatalogReader`. That adjacent remote surface is no longer planned. The
+local-only `CatalogReader` constraint still stands.
 
-The reasoning, because everything below assumes it.
-[Decision 0001](../decisions/0001-postgresql-postgis-only.md)'s argument against a
+The former reasoning, because the archived analysis below assumes it:
+[Decision 0001](../../decisions/0001-postgresql-postgis-only.md)'s argument against a
 Python-side query fallback is about failure semantics rather than mathematics:
 *the path taken when the fast one is unavailable is the path taken during an
 incident, on an unfamiliar deployment, by whoever is on call; a slow,
@@ -46,14 +47,15 @@ subtly-different query path is worse than a clear failure to connect, because th
 failure gets diagnosed and the wrong answer does not.* That applies with more
 force to a network path, which adds third-party availability and rate limiting on
 top. A separate class with a different name, a different dependency set and no
-release vocabulary is not a fallback — it is a different question asked
-deliberately. §4 lists the contracts that keeps intact.
+release vocabulary was not presented as a fallback — it was presented as a
+different question asked deliberately. §4 lists the contracts that boundary was
+meant to keep intact.
 
 ---
 
 ## 1. Four systems, four questions
 
-| System | Operator | Question it answers | Returns | Access | Auth | Support? |
+| System | Operator | Question it answers | Returns | Access | Auth | Former support verdict |
 |---|---|---|---|---|---|---|
 | **VizieR** | CDS, Strasbourg | *What sources are in this region of sky, in catalog X?* | Table rows | HTTP POST to `viz-bin/votable`; TAP/ADQL via `TAPVizieR` | None | ✅ Yes — primary remote catalog row service |
 | **SIMBAD** | CDS, Strasbourg | *Where is the thing called "M31"? What kind of object is it?* | One object: identifiers, object type, basic data, bibcodes | TAP/ADQL | None | ✅ **Yes — highest value.** No local substitute exists |
@@ -93,7 +95,7 @@ between them matters more than the overlap:
 
 **What it is.** The CDS catalog service: an archive and query interface over
 roughly 50,000 published astronomical catalogs and tables. It is simultaneously a
-bulk distribution channel — covered in [local-catalogs.md](local-catalogs.md)
+bulk distribution channel — covered in [local-catalogs.md](../local-catalogs.md)
 §3.1 — and a query service. This section is the query side.
 
 **What Skycat would use it for.** Serving remote catalog providers. That includes
@@ -270,7 +272,7 @@ just not the right something, and raises nothing.
 
 **Bulk availability: none in general.** One exception — the Local Volume Sample
 (NED-LVS), a curated table rather than a service query, surveyed in
-[local-catalogs.md](local-catalogs.md) §3.6.
+[local-catalogs.md](../local-catalogs.md) §3.6.
 
 **Verdict: conditional.** Genuinely valuable *if* the pipeline does extragalactic
 work; otherwise it is a second name resolver that mostly disagrees with the first
@@ -299,7 +301,7 @@ putting one behind a catalog reader would be a category error — the surface wo
 share nothing with the other three services except the word "remote".
 
 **The one narrow role that does make sense: provenance verification.**
-[guides/provenance.md](../guides/provenance.md) names a specific hazard — CDS
+[guides/provenance.md](../../guides/provenance.md) names a specific hazard — CDS
 occasionally supersedes a catalog with a new designation (`II/183` → `II/183A`),
 and a silently-different upstream is exactly what the provenance chain exists to
 prevent. Every `FamilyDef` carries a `reference_url`, and most catalogs have a
@@ -441,7 +443,7 @@ Two observations for a designer:
    `models/landolt.py` stores V plus five colour indices and explicitly does not
    store U/B/R/I, because the remote provider derives them at query time and the
    local provider reproduces that derivation in normalization — in the consumer.
-   That boundary is deliberate. [local-catalogs.md](local-catalogs.md) §3.4 notes
+   That boundary is deliberate. [local-catalogs.md](../local-catalogs.md) §3.4 notes
    that Gaia GSPC makes it cheaper to hold, by supplying *measured* Johnson
    magnitudes instead of derived ones.
 
@@ -674,7 +676,7 @@ answer to.
   `dict(row)` over a local release's real columns — `native_id, ra_deg, dec_deg,
   johnson_v_mag, …, extra, separation_deg`. A remote surface can choose a
   separate result shape, but if it reuses any public Skycat keys then
-  [api-stability.md](../reference/api-stability.md) permits adding keys, not
+  [api-stability.md](../../reference/api-stability.md) permits adding keys, not
   changing their meaning.
 - **Spatial work happens in the database, always.** Decision 0001.
   `separation_deg` comes from `ST_Distance(geom, point, false)`. A remote
@@ -824,7 +826,7 @@ There is also a verification opportunity worth naming. Skycat's Landolt and
 Stetson parsers claim to reproduce the remote provider's coordinate arithmetic
 exactly (§3.2). Today that is a docstring. Comparing a local release against the
 VizieR catalog it mirrors would make it a test — and each catalog
-[local-catalogs.md](local-catalogs.md) adds locally creates another such pair.
+[local-catalogs.md](../local-catalogs.md) adds locally creates another such pair.
 Tycho-2 in particular becomes comparable once mirrored.
 
 ### 4.10 Configuration namespace collision
@@ -904,17 +906,17 @@ Two sequencing observations that fall out of the survey rather than from a plan:
 
 ## 7. References
 
-**Companion** — [local-catalogs.md](local-catalogs.md): the separate local
-mirroring survey, sized against 12 TB, with download channels.
+**Current direction** — [local-catalogs.md](../local-catalogs.md): the local-only
+catalog survey, sized against 12 TB, with download channels.
 
 **Skycat** — `skycat/client.py`, `skycat/query/cone.py`,
 `skycat/query/crossmatch.py`, `skycat/registry/catalog_defs.py`,
 `skycat/models/{apass,landolt,stetson,vsx}.py`, `skycat/cli/main.py`,
-`pyproject.toml`; [decisions/0001](../decisions/0001-postgresql-postgis-only.md),
-[reference/architecture.md](../reference/architecture.md),
-[reference/api-stability.md](../reference/api-stability.md),
-[guides/provenance.md](../guides/provenance.md),
-[operations/runbook.md](../operations/runbook.md).
+`pyproject.toml`; [decisions/0001](../../decisions/0001-postgresql-postgis-only.md),
+[reference/architecture.md](../../reference/architecture.md),
+[reference/api-stability.md](../../reference/api-stability.md),
+[guides/provenance.md](../../guides/provenance.md),
+[operations/runbook.md](../../operations/runbook.md).
 
 **Skynet** (`pipeline/analysis-descriptive-split` @ `0040c28ab`) —
 `packages/py/skynet-db/skynet_db/runners/observation_asset_processing/optical_data_processing/catalogs/`

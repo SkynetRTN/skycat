@@ -1,10 +1,12 @@
 ---
-status: open
+status: archived
 reviewed: 2026-08-09
-implementation: not-started
-document-type: architecture action plan
+archived: 2026-08-09
+deprecated: 2026-08-09
+implementation: abandoned
+document-type: deprecated architecture action plan - historical context only
 inputs:
-  - docs/working/remote-catalogs.md
+  - docs/working/archive/remote-catalogs.md
   - skycat/client.py
   - skycat/query/cone.py
   - skycat/query/crossmatch.py
@@ -13,10 +15,15 @@ inputs:
 
 # Remote query architecture action plan
 
-This plan turns the remote service survey in
+> **Deprecated (2026-08-09).** Skycat will not add remote catalog support. This
+> action plan is archived as historical context only; do not implement the
+> remote package, `CatalogRemoteReader`, provider registry, fallback behavior, or
+> service adapters described below.
+
+This abandoned plan turned the remote service survey in
 [remote-catalogs.md](remote-catalogs.md) into an implementation structure for
-`CatalogRemoteReader` and the surrounding remote-query code. It is intentionally
-adjacent to, not layered inside, the current local PostgreSQL/PostGIS reader.
+`CatalogRemoteReader` and the surrounding remote-query code. The current catalog
+direction is local PostgreSQL/PostGIS support only.
 
 ## 1. Architectural position
 
@@ -24,7 +31,7 @@ adjacent to, not layered inside, the current local PostgreSQL/PostGIS reader.
 No remote fallback, mode flag, backend selector, or VizieR/SIMBAD dependency
 should be added to it.
 
-Add a separate remote package and facade:
+The abandoned plan proposed a separate remote package and facade:
 
 - Public facade: `CatalogRemoteReader`.
 - First import path: `skycat.remote.CatalogRemoteReader`.

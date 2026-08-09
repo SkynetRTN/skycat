@@ -1,53 +1,57 @@
 ---
 status: open
-reviewed: 2026-08-07
-branch: docs/catalog-coverage-split
+reviewed: 2026-08-09
+branch: docs-deprecate-remote-catalogs
 authority: upstream distribution documentation (CDS, IRSA, MAST, ESA, AAVSO, IPAC) + skycat code inspection @ 2c36084
-implementation: not-started
-document-type: research survey — inputs for a future design, not a design
+implementation: local-only-planning
+document-type: research survey - local catalog support only
 ---
 
-# Local catalog mirrors — what to store with 12 TB available
+# Local catalog support - what to store with 12 TB available
 
 **What this document is.** A survey of the astronomical data sources Skycat could
-mirror into PostgreSQL/PostGIS now that the storage envelope is **12 TB** rather
-than 4 TB. For each candidate: what it is, what it uniquely provides, exactly
-where the bulk files live, what format and volume they arrive in, what they would
-cost on disk, and whether it deserves local operational priority.
+support by mirroring into PostgreSQL/PostGIS now that the storage envelope is
+**12 TB** rather than 4 TB. For each candidate: what it is, what it uniquely
+provides, exactly where the bulk files live, what format and volume they arrive
+in, what they would cost on disk, and whether it deserves local operational
+priority.
+
+Skycat catalog support is local support. A supported catalog family has local
+source files, an ingestion path, a typed model, migrations, validation coverage,
+documentation, and PostgreSQL/PostGIS query behavior. Remote catalog services are
+not an alternate implementation path, fallback, or supported Skycat catalog
+surface.
 
 **What this document is not.** It is not a design, an architecture decision, or
 an implementation plan. It does not specify models, parsers, migrations or APIs.
 Where it touches Skycat's internals it is to establish a *constraint* a future
 design has to respect, not to propose how. A design agent should be able to read
-this, [remote-catalogs.md](remote-catalogs.md), and
-[guides/add-family.md](../guides/add-family.md), and have everything needed to
-plan the work.
+this and [guides/add-family.md](../guides/add-family.md), and have everything
+needed to plan local catalog work.
 
-**Companion:** [remote-catalogs.md](remote-catalogs.md) surveys remotely queried
-catalog providers as a separate implementation track. The split is intentional:
-local mirror decisions do not require remote support, and remote catalog
-definitions do not imply local mirroring. This document decides what is worth
-storing.
+**Deprecated context:** the former remote catalog research and remote query
+architecture notes are archived in `docs/working/archive/`. They are retained as
+historical research only and should not be used as implementation guidance.
 
 ---
 
-## 1. Four systems, and why only one of them is a bulk mirror channel
+## 1. Four systems, and why only one is a Skycat catalog channel
 
 The four astronomical data systems in scope are not four catalogs. They are four
-different kinds of thing, and the difference determines which document each
-belongs in.
+different kinds of thing, and the difference determines whether Skycat can
+support them locally.
 
-| System | Operator | Kind of thing | Unit of answer | Bulk files? |
+| System | Operator | Kind of thing | Unit of answer | Skycat local support position |
 |---|---|---|---|---|
-| **VizieR** | CDS, Strasbourg | Catalog **distribution service** — an archive of ~50,000 published catalogs and tables | Table rows | **Yes.** Anonymous FTP/HTTPS archive of the actual data files |
-| **SIMBAD** | CDS, Strasbourg | Object **database** — curated, cross-identified, predominantly galactic/stellar | One object: identifiers, object type, basic data, bibcodes | **No.** Query interfaces only |
-| **NED** | IPAC, Caltech | Object **database** — extragalactic | One object: cross-IDs, redshift, photometry, references | **No** general export. Curated subsets only |
-| **ADS** | CfA, Harvard | **Literature** database | A paper | **No.** Token-authenticated API |
+| **VizieR** | CDS, Strasbourg | Catalog **distribution service** - an archive of ~50,000 published catalogs and tables | Table rows | **Yes, when the needed table has bulk files worth mirroring.** |
+| **SIMBAD** | CDS, Strasbourg | Object **database** - curated, cross-identified, predominantly galactic/stellar | One object: identifiers, object type, basic data, bibcodes | **No**, unless CDS publishes a usable bulk snapshot for a specific local family. Query-only access is not Skycat catalog support. |
+| **NED** | IPAC, Caltech | Object **database** - extragalactic | One object: cross-IDs, redshift, photometry, references | **No** general Skycat catalog support. Curated file products such as NED-LVS can be evaluated as local families. |
+| **ADS** | CfA, Harvard | **Literature** database | A paper | **No.** Papers are not catalog rows. |
 
-**Only VizieR distributes bulk files among these four systems, so only VizieR is
-a bulk mirror channel.** That is the structural reason this document is about
-bulk distribution and [remote-catalogs.md](remote-catalogs.md) is about live
-query surfaces. The two are deliberately separate design tracks.
+**Only VizieR distributes broad catalog bulk files among these four systems, so
+only VizieR is a general catalog source channel for Skycat.** Skycat should not
+add live service query surfaces to compensate for catalogs that cannot be
+mirrored locally.
 
 Three important qualifications:
 
@@ -62,14 +66,15 @@ Three important qualifications:
 2. **SIMBAD and NED are not mirrorable, but they are also not trying to be.**
    Their value is curation — cross-identification across the literature — which
    is a living process, not a snapshot. A mirrored SIMBAD would be stale the day
-   it landed, and neither operator publishes a dump.
+   it landed, neither operator publishes a general dump, and Skycat should not
+   expose their query interfaces as catalog support.
 3. **NED has one product that *is* a file:** the Local Volume Sample (§3.6). It
    is the single mirrorable thing in the extragalactic half of this landscape,
    and it is small.
 
-**ADS has no role in this document at all.** It returns papers, not sources.
-Its narrow legitimate use in Skycat — verifying that a catalog's reference is
-real — is discussed in [remote-catalogs.md](remote-catalogs.md).
+**ADS has no role in this document at all.** It returns papers, not sources. Its
+narrow legitimate use near Skycat is provenance research outside the catalog
+query surface.
 
 ---
 
@@ -223,9 +228,9 @@ not worth having.
 
 **Reasoning.** It fits easily in 12 TB. It remains low priority because RefCat2
 is better for every calibration use, and plate photometry carries scatter the
-pipeline should prefer to avoid. Remote support is still useful for legacy
-comparison and arbitrary VizieR queries; local ingestion should wait for a named
-consumer.
+pipeline should prefer to avoid. Legacy comparison and arbitrary VizieR queries
+belong outside Skycat's supported catalog surface; local ingestion should wait
+for a named consumer.
 
 #### NOMAD — `I/297` ❌ **low-priority local**
 
@@ -343,9 +348,9 @@ needs native PS1 quantities that RefCat2 deliberately does not expose.
 **Reasoning.** This is the one thing nothing else in the survey provides:
 *measured* standardised Johnson magnitudes. It is the direct answer to the
 photometric transformation coefficients the legacy providers apply — the Lupton,
-Jester, Jordi and Tonry expressions inventoried in
-[remote-catalogs.md](remote-catalogs.md) §3.2 — because a pipeline calibrating in
-Johnson V against a measured synthetic V does not need coefficients at all.
+Jester, Jordi and Tonry expressions used by legacy remote providers — because a
+pipeline calibrating in Johnson V against a measured synthetic V does not need
+coefficients at all.
 That is a science-quality improvement, not merely a storage decision.
 
 It is absent from the entire legacy provider list purely because it postdates it.
@@ -560,8 +565,10 @@ Ordered by how much they gate.
 
 ## 7. References
 
-**Companion** — [remote-catalogs.md](remote-catalogs.md): remotely queried
-catalog providers, SIMBAD, NED and ADS.
+**Archived deprecated context** — `docs/working/archive/remote-catalogs.md` and
+`docs/working/archive/remote-query-architecture-plan.md`: historical research
+about remote catalog services. Remote catalog support has been deprecated and is
+not a Skycat implementation track.
 
 **Skycat** — `skycat/models/apass.py`, `skycat/models/mixins.py`,
 `skycat/ingestion/runner.py`, `skycat/registry/catalog_defs.py`;
