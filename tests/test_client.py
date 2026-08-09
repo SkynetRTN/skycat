@@ -66,9 +66,7 @@ def _activate(settings, family: str, name: str) -> None:
 
 
 def _deactivate(settings, family: str, name: str) -> None:
-    _mutate_release(
-        settings, family, name, lambda session, release: deactivate_release(session, release)
-    )
+    _mutate_release(settings, family, name, deactivate_release)
 
 
 def _set_state(settings, family: str, name: str, state: CatalogReleaseState) -> None:
