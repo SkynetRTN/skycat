@@ -1,85 +1,179 @@
 ---
 status: open
-reviewed: 2026-08-06
-branch: dev
-authority: code-inspection (skycat @ 92282d4, skynet @ 0040c28ab, afterglow-core @ 92aaf61) + upstream docs
+reviewed: 2026-08-07
+branch: docs/remote-catalog-reader
+authority: code-inspection (skycat @ 570883e, skynet @ 0040c28ab, afterglow-core @ 92aaf61) + upstream docs
 implementation: not-started
 ---
 
-# Remote catalog support via astroquery — feasibility
+# Catalog coverage — local families first, then an adjacent `RemoteCatalogReader`
 
-Skycat exists because astroquery could not go local. The 2026-07-04
-investigation that seeded this package established that
-`astroquery.vizier.Vizier` only POSTs to a VizieR-compatible HTTP endpoint and
-has no local-index mode, and the recommendation was to build a local backend
-*behind* the existing provider abstraction rather than bend astroquery toward
-local files. This note asks the reverse question: now that the local store
-exists, should astroquery come back — inside Skycat this time?
+Skycat exists because astroquery could not go local. The 2026-07-04 investigation
+that seeded this package established that `astroquery.vizier.Vizier` only POSTs to
+a VizieR-compatible HTTP endpoint and has no local-index mode, and the
+recommendation was to build a local backend *behind* the existing provider
+abstraction rather than bend astroquery toward local files.
 
-The short answer is that "remote catalog support" is four different proposals
-wearing one name, and they have four different answers. Sorting them out is most
-of the work of this document.
+The previous revision of this note asked the reverse question — *should astroquery
+come back, inside Skycat?* — and answered it as a four-way feasibility study whose
+verdict was mostly negative. That study is still the evidence base and most of it
+survives below. What has changed is the question. It is no longer *whether*
+remote catalogs belong in Skycat, but *where they attach*, and the answer this
+note is now organised around is:
 
-## Verdict
+> **Remote catalog access is an adjacent feature, not a mode of the existing one.**
+> `CatalogReader` stays strictly local PostgreSQL/PostGIS, unchanged, forever. A
+> new `RemoteCatalogReader` owns every VizieR and SIMBAD connection. They share a
+> package, a row convention and a config namespace. They share no call path, no
+> fallback, no release vocabulary, and no failure mode.
 
-| # | Proposal | Feasible? | Recommendation | Rough effort |
-|---|---|---|---|---|
-| **A** | Query-time remote fallback inside `CatalogReader` — local first, VizieR when local is unavailable/empty | Technically yes | **No.** Contradicts [decision 0001](../decisions/0001-postgresql-postgis-only.md) on its own reasoning, and the layer already exists downstream in `skynet-db` | 2–4 weeks + permanent behavioural surface |
-| **B** | Remote-only families — PanSTARRS, 2MASS, Tycho-2, UCAC5, USNO-B1.0, SkyMapper served straight from VizieR through a Skycat API | Yes | **Defer.** Real value, but no consumer has asked, and it needs a deliberately *non-parallel* API to stay honest | 3–6 weeks for 2–3 families |
-| **C** | Automated source acquisition — `skycat fetch` pulling release data via astroquery | Yes, but wrong tool | **No.** astroquery is a cone/region query API, not a bulk mirror. `wget` against `cdsarc.cds.unistra.fr/ftp/` already does this and is documented | 0 (already solved) |
-| **D** | Parity harness — dev-only checks comparing a local release against the VizieR catalog it mirrors | Yes | **Yes, do this.** Highest value, lowest risk, `dev` extra only, no runtime surface | 2–4 days |
+That single structural decision resolves, or reduces to a documented boundary,
+almost every objection the feasibility study raised. The objections did not go
+away — they became the reasons the two classes are separate. Sections 1 and 5
+make that mapping explicit; section 6 is the action plan.
 
-The one-line version: **adopt D, defer B, reject A and C.** D is already
-anticipated by the README, which describes `--release` as "an operations and
-parity-testing affordance — … comparing the local store against a remote source
-that mirrors an older release".
+**What is being built, in one paragraph.** An optional extra, `skycat[remote]`,
+adds `skycat/remote/` containing `RemoteCatalogReader` with three operations:
+`resolve()` (SIMBAD name → coordinates, the one capability a local mirror
+structurally cannot provide), `cone()` (VizieR cone search against a declarative
+catalog table), and `describe()` (designation metadata, usable as a provenance
+lint). Rows come back in Skycat's dict-of-typed-columns convention with reserved
+`_source` / `_service` / `_designation` / `_retrieved_at` keys and **no release
+attribution**, because there is none to give. The default install stays at five
+dependencies and `import skycat` never imports astroquery.
 
-Read §5 before disagreeing with the rejection of A. The blocker is not
-philosophical; it is that VizieR does not carry the APASS release Skycat
-actually serves.
+**And it is built second.** Remote access is worth having for the catalogs that
+genuinely cannot be mirrored — and until Skycat knows which those are, "cannot
+be mirrored" is an assumption, not a measurement. Four of the six catalogs the
+legacy plugin layer serves remotely fit comfortably on a disk Skycat already
+has; one of them, Tycho-2, is under a gigabyte and its local implementation is already
+written out as the worked example in
+[guides/add-family.md](../guides/add-family.md). Section 6 sizes every
+candidate, section 7 puts the local work first, and the remote phases are
+deliberately gated on it: **`RemoteCatalogReader` should ship covering the
+catalogs local storage cannot justify, not the catalogs nobody has tried to
+store yet.**
 
 ---
 
-## 1. What "remote support" actually means
+## 1. The framing: two readers, one package
 
-These get conflated because they all involve the word "astroquery". They differ
-in what crosses the package boundary, and that is what determines the cost.
+### 1.1 The split
 
-| | Who calls astroquery | When | What Skycat contract it touches |
+| | `CatalogReader` | `RemoteCatalogReader` |
+|---|---|---|
+| Module | `skycat/client.py` (unchanged) | `skycat/remote/` (new) |
+| Data source | PostgreSQL/PostGIS, one active release per family | VizieR (CDS) and SIMBAD over HTTP |
+| Dependencies | the five runtime libraries | `skycat[remote]` extra: astroquery + its stack |
+| Unit of selection | `family` (`apass`, `vsx`, `landolt`, `stetson`) | `catalog` (a VizieR designation, keyed by a short name) |
+| Release attribution | every row belongs to a `ResolvedRelease`; `--release` selects one | none. `_designation` says what was queried; there is no release |
+| Reproducibility | manifest/content checksum, `source_modified_at`, `importer_version` | none. `_retrieved_at` is a timestamp, not a guarantee |
+| Spatial work | `ST_DWithin`/`ST_Distance` on a GiST-indexed `geography` column | the remote service filters; separation is arithmetic on the returned rows |
+| Failure modes | connection, statement timeout, missing release | HTTP 4xx/5xx, DNS, rate limit, malformed VOTable, service timeout |
+| Exceptions | `CatalogQueryError` | `RemoteCatalogError` — a **sibling**, never a subclass |
+| Latency budget | single-digit ms to low hundreds of ms, bounded by a 30s statement timeout | seconds, unbounded by anything Skycat controls |
+| Batch crossmatch | one `COPY` + one `LATERAL` join + one round trip | **not offered.** There is no remote analogue that is not a loop |
+| Availability | ours | CDS's |
+
+### 1.2 The rejections become invariants
+
+The feasibility study rejected query-time remote fallback (its "Option A") on
+three grounds. Under the adjacent-reader framing, each of those grounds stops
+being an argument and becomes a property the code must preserve:
+
+| Study's objection to fallback | Now expressed as |
+|---|---|
+| [Decision 0001](../decisions/0001-postgresql-postgis-only.md) argues a degraded path used during an incident is worse than a clear failure | **Invariant:** no method on `CatalogReader` may reach the network. A caller who wants remote data constructs the other class and knows it |
+| VizieR does not carry the APASS release Skycat serves (§5.2) | **Invariant:** a remote row carries no release. Nothing can accidentally attribute VizieR's APASS DR9 to a local DR10 release id |
+| The routing layer already exists downstream, where its output shape is native (§2.8) | **Invariant:** Skycat ships no routing. `local_first` / `remote_only` mode selection stays the consumer's; Skycat provides the two ends, not the switch |
+
+This is why the plan does **not** supersede decision 0001 and does not need to.
+0001 is about the query path having one implementation. It still does. A second
+class with a different name, a different exception type, a different dependency
+set and no release vocabulary is not a fallback — it is a different question
+being asked deliberately. Phase R0 (§7) writes that argument down as decision
+0002 so it is settled rather than re-derived.
+
+### 1.3 Explicitly out of scope
+
+Four things a reader might reasonably expect from "remote catalog support" that
+this plan does not build, each for a stated reason:
+
+1. **No fallback of any kind inside `CatalogReader`** — §1.2. Not on
+   unavailability, not on empty results, not behind a flag. A flag is the same
+   ambiguity with a switch on it.
+2. **No unified facade** (`Reader` that dispatches to either). It would
+   re-introduce exactly the property §1.2 removes: error handling, latency
+   budget, timeout semantics and reproducibility silently changing based on which
+   string was passed. Reconsider only if a consumer demonstrates a real need, and
+   then as a *consumer-side* class.
+3. **No automated source acquisition** (`skycat fetch`). astroquery is a
+   cone/region query API, not a bulk mirror; pulling 128M APASS rows through it
+   means either `row_limit=-1` on an all-sky query, which CDS will rightly
+   refuse, or tiling the sky into millions of cones. The bulk channel is
+   `https://cdsarc.cds.unistra.fr/ftp/<designation>/` and
+   [provenance.md](../guides/provenance.md) already documents the
+   `wget --timestamping` recipe, the `--cut-dirs` depth trap, and why preserving
+   upstream mtimes matters for the manifest checksum. APASS comes from AAVSO, not
+   CDS, at all. `SKYCAT_DATA_ROOT` stays read-only and Skycat still downloads
+   nothing on the ingestion path.
+4. **No photometric transformation tables.** The legacy `filter_lookup` maps a
+   FITS `FILTER` header value to a reference band (§2.2). Skycat has never seen a
+   FITS file. Importing that table would be the package acquiring an opinion
+   about instrument metadata, and it is already owned downstream — Skycat's
+   `models/landolt.py` deliberately stores V plus five colour indices and lets
+   the consumer derive U/B/R/I, precisely so that the local and remote paths
+   agree by not deriving anything.
+
+### 1.4 Three operations, and who owns each
+
+| Operation | Local | Remote | Notes |
 |---|---|---|---|
-| **A** Fallback | `CatalogReader.cone()` | Every query, on local miss | Row dicts, release identity, statement timeout, exit codes |
-| **B** Remote families | A new remote reader | Every query for that family | A new, separate API surface |
-| **C** Acquisition | `skycat fetch` (new) | Once per release, offline | `SKYCAT_DATA_ROOT` read-only invariant, provenance |
-| **D** Parity | `tests/` | CI / on demand | None. Dev dependency only |
-
-A and B both put the network on a query path; C puts it on the ingestion path;
-D puts it nowhere that ships. The difficulty ranking follows exactly that
-ordering, and so does the blast radius of getting it wrong.
+| Cone search | ✅ `CatalogReader.cone()` | ✅ `RemoteCatalogReader.cone()` | Same *shape*, different guarantees. §4.3 |
+| Lookup by native id | ✅ `lookup()` | ⏸ deferred | Expressible as a VizieR `column_filter`, but the id column differs per catalog. R4 at the earliest |
+| Batch crossmatch | ✅ `crossmatch()` | ❌ never | N HTTP requests is a different operation, not a slow version of this one. §4.10 |
+| Name resolution | ❌ impossible | ✅ `resolve()` | SIMBAD. The one capability local-first structurally cannot match. §4.5 |
+| Designation metadata | ❌ n/a | ✅ `describe()` | Lints a superseded designation (`II/183` → `II/183A`). §4.11 |
+| Parity verification | — | dev-only harness | R1. The highest-value, lowest-risk piece, and it ships nothing |
 
 ---
 
 ## 2. The legacy system, inventoried
 
-This section is the reference material the rest of the report argues from.
+This section is the reference material the design argues from. It is longer than
+it looks necessary because the inventory itself is the finding: what looked like
+one integration is three, in two repositories, at two different layers, and they
+disagree with each other.
 
-### 2.0 Three lineages, four copies
+### 2.0 Three integrations, three lineages, six copies
 
-The same eleven catalog plugins exist in four places under three distinct
-lineages, and they are **not** identical. Reading only one of them gives an incomplete picture of the lookup
-tables.
+| # | Integration | Location | Layer | Status |
+|---|---|---|---|---|
+| **1** | VizieR plugin layer | `skynet/…/optical_data_processing/catalogs/` | pipeline | **Authoritative in production.** The fork the optical pipeline calls |
+| 1′ | — vestigial fork | `skynet/packages/py/skynet-db/skynet_db/runners/common/catalog_plugins/` | — | Older fork. Its only query consumer is dead code |
+| 1″ | — upstream original | `afterglow-core/afterglow_core/resources/catalog_plugins/` (`master` @ `92aaf61`) | — | Flask-config-driven. Carries two declarative mechanisms the forks dropped (§2.3) |
+| 1‴ | — vendored snapshot | `skynet/apps/afterglow/docs/legacy/resources/catalog_plugins/` | — | Byte-identical copy of 1″, kept as reference |
+| **2** | SIMBAD target resolver | `skynet/apps/public-api/public_api/services/target_search.py` | public API + SSR site | **Live.** Mounted by both the `/web` site and `/v1` (§2.6) |
+| **3** | Direct VizieR APASS endpoint | `skynet/apps/public-api/public_api/routers/catalog_objects.py:54` | public API | **Live.** Bypasses the plugin layer entirely (§2.7) |
 
-| Copy | Path | Status |
-|---|---|---|
-| **Afterglow (upstream)** | `afterglow-core/afterglow_core/resources/catalog_plugins/` (`master` @ `92aaf61`) | The original. Flask-config-driven; carries two declarative mechanisms the forks dropped (§2.3) |
-| Afterglow (vendored) | `skynet/apps/afterglow/docs/legacy/resources/catalog_plugins/` | Byte-identical snapshot of the above, kept as reference |
-| skynet "common" | `skynet/packages/py/skynet-db/skynet_db/runners/common/catalog_plugins/` | Older fork. The vault's [[Catalog Registry Reconciliation]] establishes this one as **vestigial** — its only query consumer is dead code |
-| **skynet "optical"** | `skynet/…/optical_data_processing/catalogs/` | **Authoritative in production.** The fork the pipeline actually calls |
+Integrations 2 and 3 are absent from every previous analysis of this problem,
+including the first revision of this note. They matter disproportionately:
+
+- **Integration 2 is the only SIMBAD dependency in the system**, and SIMBAD is
+  the one remote service with no local substitute — it resolves *names*, and
+  Skycat's local store has no name index for anything but its own `native_id`s.
+  If `RemoteCatalogReader` ships one operation, it should be this one.
+- **Integration 3 proves the plugin layer is bypassable and gets bypassed.**
+  Someone needed an APASS cone over HTTP, found the plugin layer too entangled
+  with the pipeline to reuse, and wrote 60 lines of astroquery directly into a
+  FastAPI route. That is exactly the demand a supported `RemoteCatalogReader`
+  absorbs, and §2.7 catalogues what went wrong when it was written by hand.
 
 The Afterglow → skynet fork replaced Flask's `current_app.config` with module
 constants and marshmallow's `CatalogSource` with a pydantic one. Both
-substitutions changed behaviour, and §2.3 and §2.4 are the consequences.
+substitutions changed behaviour; §2.3 and §2.4 are the consequences.
 
-### 2.1 The plugin contract
+### 2.1 Integration 1 — the plugin contract
 
 `Catalog` (`catalog.py`, 45 lines) is a bare abstract base: `name`,
 `display_name`, `num_sources`, `mags`, `filter_lookup`, and three query methods
@@ -108,13 +202,21 @@ means the value was a literal column name rather than an expression, and it is
 taken verbatim. That is how `'RAJ2000/15'` yields a request for `RAJ2000` while
 `'recno'` yields `recno`.
 
-`table_to_sources` runs the inverse at row scale: for each `col_mapping` entry
-it tries `row[expr]` first (fast path, literal column) and falls back to
-`eval(expr, {**numpy.__dict__, **row_columns}, {})`. Magnitudes are read from
-the `mags` pairs, with a `"'"` → `"_"` retry because VizieR renames `g'mag` to
+`table_to_sources` runs the inverse at row scale: for each `col_mapping` entry it
+tries `row[expr]` first (fast path, literal column) and falls back to
+`eval(expr, {**numpy.__dict__, **row_columns}, {})`. Magnitudes are read from the
+`mags` pairs, with a `"'"` → `"_"` retry because VizieR renames `g'mag` to
 `g_mag`, and are **kept only when `val and val < 99`** — the sentinel filter that
 turns VizieR's 99.99 "no measurement" into an absent band. A source with no
 surviving magnitudes is dropped entirely.
+
+**What `RemoteCatalogReader` takes from this:** the declaration/expression split
+is the right idea and the `eval` is the wrong implementation (§4.4, §5.7). The
+`< 99` sentinel rule is real domain knowledge and must be carried over
+explicitly, as a per-column declared sentinel rather than a global magic number.
+The drop-sources-with-no-magnitudes rule must **not** be carried over: a Skycat
+cone returns positional rows regardless, and silently returning fewer rows for
+invisible reasons is the failure mode §5.4 is about.
 
 ### 2.2 The lookup tables
 
@@ -140,12 +242,14 @@ Note the registry-key/`name` mismatches (`Tycho`→`Tycho2`, `UCAC`→`UCAC5`,
 `USNO`→`USNOB1`, `Stetson`→`StetsonGlobs`). The vault's
 [[Catalog Selection and Provider Registry]] flags this as a live failure mode:
 lookup-based filter resolution keyed on one and not the other can miss a
-catalog's custom map, with UCAC's wildcard as the clearest case.
+catalog's custom map, with UCAC's wildcard as the clearest case. **A remote
+catalog table in Skycat gets one key per catalog and no second name** — the
+mismatch is a bug that a single-key schema cannot express.
 
 `num_sources` are hardcoded and stale. The VSX entry says 2,115,593; Skycat's
-`approx_row_count` for the same family is 10,300,000. Nobody is wrong — VSX is
-a living index and the two numbers are snapshots years apart — which is exactly
-the point developed in §5.2.
+`approx_row_count` for the same family is 10,300,000. Nobody is wrong — VSX is a
+living index and the two numbers are snapshots years apart — which is exactly the
+point developed in §5.2.
 
 #### Column mappings
 
@@ -163,18 +267,21 @@ the point developed in §5.2.
 | VSX | `OID` (coerced to `str`) | `RAJ2000/15`, `DEJ2000` |
 
 Three things to notice. **RA is in hours at this interface** — every mapping
-divides by 15, and Skycat is degrees throughout. **Two providers parse
-sexagesimal in an `eval`'d string expression**, including a sign fix-up
-(`(1 - 2*(DEJ2000.strip().startswith("-")))`) that exists because `-00 30 00`
-loses its sign through `int()`. Skycat's `landolt.py` and `stetson.py` parsers
-reimplement precisely this arithmetic in normal Python, deliberately, so the two
-backends agree. **Tycho-2's `id` is a `str.format` call** evaluated per row —
-the `co_names` harvester picks up `TYC1`, `TYC2`, `TYC3` as columns and
-`format` resolves off the string literal.
+divides by 15, and Skycat is degrees throughout; the boundary conversion is a
+named function in the mapping layer, not a `/15` sprinkled through the table.
+**Two providers parse sexagesimal in an `eval`'d string expression**, including a
+sign fix-up (`(1 - 2*(DEJ2000.strip().startswith("-")))`) that exists because
+`-00 30 00` loses its sign through `int()`. Skycat's `landolt.py` and `stetson.py`
+parsers reimplement precisely this arithmetic in normal Python, deliberately, so
+the two backends agree — which is the claim R1's parity harness exists to
+turn into a test. **Tycho-2's `id` is a `str.format` call** evaluated per row; the
+`co_names` harvester picks up `TYC1`, `TYC2`, `TYC3` as columns and `format`
+resolves off the string literal.
 
 #### Filter lookups (photometric transformations)
 
-This is the part with the most science in it and the least test coverage.
+This is the part with the most science in it and the least test coverage, and per
+§1.3 it is the part Skycat does not take.
 
 | Provider | Key | Expression |
 |---|---|---|
@@ -190,31 +297,21 @@ This is the part with the most science in it and the least test coverage.
 
 The registry (`catalogs/__init__.py`) then **overlays a second, larger
 `filter_lookup`** per provider at construction time. APASS gets 30 additional
-keys: `Open`/`Clear`/`Lum` → `V`; `gp`/`rp`/`ip` naming aliases;
-astrophotography filters (`Red`, `Green`, `Blue`, `Halpha`, `OIII`, `SII`,
-`Hbeta`); and sixteen curriculum-education combinations (`R+Red`, `R,Red`,
-`Red+R`, `Red,R`, `Green+V`, …). PanSTARRS gets eight naming aliases; Landolt,
-Stetson and Tycho get the `Open`/`Clear`/`Lum` → `V` trio.
+keys: `Open`/`Clear`/`Lum` → `V`; `gp`/`rp`/`ip` naming aliases; astrophotography
+filters (`Red`, `Green`, `Blue`, `Halpha`, `OIII`, `SII`, `Hbeta`); and sixteen
+curriculum-education combinations (`R+Red`, `R,Red`, `Red+R`, `Red,R`,
+`Green+V`, …). PanSTARRS gets eight naming aliases; Landolt, Stetson and Tycho
+get the `Open`/`Clear`/`Lum` → `V` trio.
 
-Two observations that matter for Skycat:
-
-1. **These are consumer-layer concerns.** They map a *FITS `FILTER` header
-   value* to a reference band. Skycat has never seen a FITS file and does not
-   know what a curriculum filter wheel is labelled. Importing this table into
-   Skycat would be the package acquiring an opinion about instrument metadata.
-2. **Skycat already declined to own the analogous derivation.** `models/landolt.py`
-   stores V plus the five color indices and explicitly does *not* store U/B/R/I,
-   because "the remote VizieR provider derives them from V + the colors at query
-   time, and the local provider reproduces that exact derivation in
-   normalization". The deriving code lives in `skynet-db`'s `normalize.py`, not
-   here. That boundary is deliberate and worth keeping.
+Both tables stay downstream. What `RemoteCatalogReader` returns is the catalog's
+*native* bands under Skycat column names — `bt_mag`, `vt_mag` for Tycho-2 — and
+the consumer transforms, exactly as it does for local rows today.
 
 ### 2.3 Declarative catalog definition — the mechanism the forks dropped
 
 This is the most directly relevant precedent in the whole codebase, and it
-survives only in upstream Afterglow (`afterglow_core/default_cfg.py`). Two
-config variables let an operator extend the catalog set **without writing
-code**.
+survives only in upstream Afterglow (`afterglow_core/default_cfg.py`). Two config
+variables let an operator extend the catalog set **without writing code**.
 
 **`CATALOG_OPTIONS`** — per-catalog overrides merged over an existing plugin's
 class attributes in `Catalog.__init__`:
@@ -227,9 +324,9 @@ CATALOG_OPTIONS = {
 ```
 
 **`CUSTOM_VIZIER_CATALOGS`** — whole new catalogs as plain dicts. At import time
-`vizier_catalogs.py` does `type(classname, (VizierCatalog,), kw)` for each
-entry, sanitising the name into a Python identifier and appending it to
-`__all__`. The shipped (commented-out) example is NOMAD-1:
+`vizier_catalogs.py` does `type(classname, (VizierCatalog,), kw)` for each entry,
+sanitising the name into a Python identifier and appending it to `__all__`. The
+shipped (commented-out) example is NOMAD-1:
 
 ```python
 CUSTOM_VIZIER_CATALOGS = [
@@ -246,29 +343,32 @@ CUSTOM_VIZIER_CATALOGS = [
 
 That is a 1.1-billion-row catalog added in twelve lines of configuration. It is
 the strongest available demonstration that **a VizieR catalog is data, not
-code** — and therefore the strongest argument that if Skycat ever does Option B,
-the family table should be declarative rather than a class per catalog.
+code**, and it is the direct precedent for §4.4's declarative table.
 
 It is also a demonstration of what goes wrong when a declarative table has no
 schema and no tests. **The shipped example does not work.** `mags` values are
-consumed by `table_to_sources` as `mag_col, mag_err_col = item[:2]`, which
-expects a sequence of one or two column names. Given the example's plain string
-`'Bmag'`, `item[:2]` is `'Bm'`, so `mag_col = 'B'` and `mag_err_col = 'm'`;
-`row['B']` raises `KeyError`, the retry raises `KeyError`, and the enclosing
+consumed by `table_to_sources` as `mag_col, mag_err_col = item[:2]`, which expects
+a sequence of one or two column names. Given the example's plain string `'Bmag'`,
+`item[:2]` is `'Bm'`, so `mag_col = 'B'` and `mag_err_col = 'm'`; `row['B']`
+raises `KeyError`, the retry raises `KeyError`, and the enclosing
 `except Exception: pass` drops the magnitude. With every band dropped, the
-`if source.mags:` guard drops every *source* — a NOMAD catalog configured
-exactly as documented returns zero rows, silently. The real plugins all use
-lists (`['Bmag', 'e_Bmag']`, or `['Bmag']` which takes the `ValueError` →
-`item[0], None` path), and VSX's empty-string values survive only because
-`''[0]` raises `IndexError` into the `continue`.
+`if source.mags:` guard drops every *source* — a NOMAD catalog configured exactly
+as documented returns zero rows, silently. The real plugins all use lists
+(`['Bmag', 'e_Bmag']`, or `['Bmag']` which takes the `ValueError` → `item[0], None`
+path), and VSX's empty-string values survive only because `''[0]` raises
+`IndexError` into the `continue`.
 
 Both mechanisms were dropped in the skynet forks: `CUSTOM_VIZIER_CATALOGS` and
-the `current_app.config` lookups are gone, replaced by the four-line
-`config.py`. The skynet registry (§2.2) re-implements the *overlay* half of
-`CATALOG_OPTIONS` by passing `filter_lookup=` to each constructor, but there is
-no longer any way to add a catalog without adding a module.
+the `current_app.config` lookups are gone, replaced by the four-line `config.py`.
+The skynet registry (§2.2) re-implements the *overlay* half of `CATALOG_OPTIONS`
+by passing `filter_lookup=` to each constructor, but there is no longer any way
+to add a catalog without adding a module.
 
-### 2.4 Machinery around the query
+**The lesson the design takes:** declarative yes, untyped no. A frozen dataclass
+with `tuple[str, str | None]` bands would have made the broken NOMAD example a
+startup error instead of a catalog that silently returns nothing. §4.4.
+
+### 2.4 Machinery around the query — five warnings
 
 Five pieces of the legacy integration are worth reading as warnings rather than
 as designs to port.
@@ -279,10 +379,7 @@ that a caching failure under concurrent access is swallowed rather than raised,
 and so that files older than `VIZIER_CACHE_AGE_DAYS` (30) are pruned on write.
 The replacements are four bare `except Exception: pass` blocks reaching into
 another package's internals. Under Skycat's ruff configuration this would not
-merge: `BLE001` (blind `except Exception`) and `S110` (`try`/`except`/`pass`)
-are both selected and are errors, not style nits. Making it pass would require
-`per-file-ignores` and a justification comment — which is the correct process,
-but it is a signal about what integrating this library costs.
+merge: `BLE001` and `S110` are both selected and are errors, not style nits.
 
 **Cache hit rates required rounding the query.** `query_box`/`query_circ`
 quantise the field centre to 10 arcsec, the radius to 0.2 arcmin, and clamp
@@ -291,7 +388,7 @@ differences in RA/Dec and size". A Skycat cone search returns rows within
 `radius_deg` of exactly `(ra, dec)`; a remote-backed one with caching on returns
 rows for a nearby cone of a slightly different size. That is a silent,
 position-dependent difference in the returned set, not a rounding of a displayed
-number.
+number. §4.9 forbids it.
 
 **And the two lineages disagree about whether caching is even on.** Afterglow
 defaults `VIZIER_CACHE = True` and `VIZIER_SERVER = 'vizier.cfa.harvard.edu'`,
@@ -310,20 +407,22 @@ skynet fork's `vsx_catalog.py` differs from Afterglow's by exactly two defensive
 patches, both added after the fact, both for the same root cause: Afterglow's
 marshmallow `CatalogSource` became a pydantic model, so `id=row['OID']` (an int)
 raised a validation error, and `setattr(source, 'G', …)` for a passband with no
-declared field raised too. Neither surfaced as an error. The comment left behind on the fix says it
-plainly: the validation error was one "which `_filter_variable_stars` swallows,
-silently disabling variable-star filtering". A whole safety feature was off,
-with no failure visible anywhere. Skycat's row shape is a third schema again (§5.4); the same
-class of silent failure is the default outcome, not the unlucky one.
+declared field raised too. Neither surfaced as an error. The comment left behind
+says it plainly: the validation error was one "which `_filter_variable_stars`
+swallows, silently disabling variable-star filtering". A whole safety feature was
+off, with no failure visible anywhere. Skycat's row shape is a third schema again
+(§5.4); the same class of silent failure is the default outcome, not the unlucky
+one, and §8 is the answer.
 
 **Constraints go over the wire as strings.** `query_region` splits its
 `constraints` dict into `column_filters` (entries with a value) and `keywords`
 (entries with `None`). SkyMapper's subclass uses this to force `flags = '0'`,
 dropping sources with non-zero SExtractor flags. The VizieR filter syntax is its
-own small language (`>10`, `<=5`, `!=0`, ranges) with no relationship to
-Skycat's validated `QualityFilter`.
+own small language (`>10`, `<=5`, `!=0`, ranges) with no relationship to Skycat's
+validated `QualityFilter` — and §2.7 shows what happens when a caller forgets
+that.
 
-### 2.5 How selection works today
+### 2.5 How catalog selection works today
 
 `select_catalogs_for_filter` / `catalog_supports_filter` keep only catalogs whose
 `mags` keys — or whose `filter_lookup` expression has all its dependencies
@@ -337,12 +436,119 @@ Preselection is not the final truth: a catalog can pass stage 1 and still lose
 every source in stage 2. VSX declares ~40 bands and looks maximally
 filter-compatible, but is **not a calibration catalog** — it is used only in
 `_filter_variable_stars()`, and letting it into a calibration list is a known
-foot-gun.
+foot-gun. This whole layer stays downstream (§1.3.4); it is inventoried here so
+that nobody mistakes it for something `RemoteCatalogReader` is meant to replace.
 
-### 2.6 The local-first layer already exists — downstream
+### 2.6 Integration 2 — the SIMBAD target resolver
 
-The routing this report might otherwise propose building has already been built,
-in `skynet-db`, as a `LocalFirstCatalog` mixin placed in front of the VizieR
+`apps/public-api/public_api/services/target_search.py` (394 lines) resolves a
+free-text identifier to a submittable `TargetSearchResult` across five sources:
+SIMBAD, NORAD satellites, major solar-system bodies, MPC comets, and MPC orbits.
+The last four are local database queries. **SIMBAD is the only remote one**, and
+it is the only SIMBAD dependency in the system. It is mounted by both the `/web`
+SSR site and `GET /v1/catalog-objects/search`.
+
+```python
+customSimbad = Simbad()
+SIMBAD_ENABLED = True
+try:
+    customSimbad.add_votable_fields("otype")
+except Exception:
+    SIMBAD_ENABLED = False
+```
+
+The query is `customSimbad.query_object(name, wildcard=False)`, and each row
+yields `main_id`, `otype`, `ra`, `dec`, wrapped into a `FixedPosition` with
+`EquatorialCoordinates(epoch=datetime(2000, 1, 1, 12, 0, 0))`. A 200-entry
+`SIMBAD_OBJECT_TYPES` dict maps SIMBAD's machine `otype` to a human label.
+
+Seven observations, each of which is a requirement on §4.5:
+
+1. **The module-level singleton is constructed at import time, and a failure
+   there disables SIMBAD permanently and silently.** `add_votable_fields("otype")`
+   is a network-touching call in current astroquery (the field list is validated
+   against the service). If it fails once — CDS slow during a deploy, DNS not yet
+   up in a fresh pod — `SIMBAD_ENABLED` is `False` for the life of the process and
+   every subsequent search silently returns only the local sources. Nothing logs
+   it, nothing retries, nothing surfaces it in a health check.
+2. **The lowercase column names pin an astroquery major behaviour change.**
+   `ra`, `dec`, `main_id`, `otype` are the post-0.4.8 names; 0.4.7 and earlier
+   returned `RA`, `DEC`, `MAIN_ID` — and `RA`/`DEC` were *sexagesimal strings*,
+   not float degrees. astroquery 0.4.8 rewrote the SIMBAD module onto SIMBAD's
+   **TAP interface**, lowercased every column, removed the `typed_id` votable
+   field, deprecated `query_criteria`, and added a `user_specified_id` column.
+   `skynet` pins `astroquery==0.4.10`, so this code is correct today and would
+   break on a downgrade with no type error to catch it.
+3. **`Angle(ra, unit=u.degree)` on a value that is already float degrees** is a
+   no-op wrap that exists because the pre-0.4.8 value was a sexagesimal string.
+   It is vestigial, and it is the only thing that would keep the code from
+   crashing loudly if the columns ever revert.
+4. **The name is lowercased before being sent**: `name = (name or "").strip().lower()`.
+   Harmless for SIMBAD, which is case-insensitive, but the same lowercased string
+   is then used for the four `ilike` local queries, so the two behaviours are
+   coupled through one variable.
+5. **`limit` does not bound the SIMBAD results.** The docstring says so
+   explicitly — "`limit` bounds the per-catalog result count (SIMBAD returns its
+   own match set)" — so a caller passing `limit=25` can still get an unbounded
+   list back. Every local branch applies `.limit(limit)`; the remote one does not.
+6. **The epoch is hardcoded J2000** and no proper motion is applied. SIMBAD
+   returns ICRS coordinates at the catalog epoch; for a high-proper-motion star
+   the difference is real and unattributed.
+7. **Errors are `print()`, not logging**, inside `except Exception` — five of
+   them, one per source. A SIMBAD outage degrades to "no fixed-position results"
+   with a line on stdout.
+
+**Why this is the first thing `RemoteCatalogReader` should own.** Name resolution
+is not a catalog query and has no local analogue — Skycat's `lookup()` takes a
+`native_id` for one family, which is a fundamentally different operation from
+"what is `M31`". It is a small, well-defined surface: one string in, a list of
+`(name, type, ra_deg, dec_deg)` out. It has no release semantics to violate, no
+schema impedance, no `mags` mapping, and no photometric transformation. And the
+existing implementation has seven identified defects that a supported
+implementation with a real failure taxonomy would fix by construction.
+
+### 2.7 Integration 3 — the direct VizieR APASS endpoint
+
+`GET /v1/catalog-objects/vizier/apass`
+(`apps/public-api/public_api/routers/catalog_objects.py:54`) is a 60-line
+astroquery cone search written directly into a FastAPI route, bypassing the
+plugin layer, the `CatalogSource` shape, and the local-first router. It is the
+clearest statement of unmet demand in the system, and every one of its defects is
+a requirement on the design.
+
+```python
+Vizier.ROW_LIMIT = 1000
+center_coord = coord.SkyCoord(ra=ra_deg, dec=dec_deg, unit=(u.deg, u.deg))
+column_filters = {}
+if query.b: column_filters["Bmag"] = query.b
+...
+tables = Vizier.query_region(center_coord, catalog="APASS9",
+                             radius=radius_deg * u.deg, column_filters=column_filters)
+```
+
+| # | Defect | Consequence | How §4 avoids it |
+|---|---|---|---|
+| 1 | `Vizier.ROW_LIMIT = 1000` mutates the **module-global** astroquery class attribute on every request | Process-wide, shared across concurrent requests and with anything else in the worker that imports `Vizier`. A row limit set here leaks into an unrelated caller | The reader owns a per-instance `Vizier` object; nothing global is mutated |
+| 2 | `column_filters["Bmag"] = query.b` passes a **float** into VizieR's filter mini-language | A bare numeric value is an *equality* constraint in that language, not an upper limit. `?b=12.5` asks for `Bmag = 12.5` exactly and returns essentially nothing. The magnitude constraints on this endpoint do not do what their names suggest | Typed `mag_min`/`mag_max` floats rendered into the filter string by the mapping layer, never passed through |
+| 3 | `b`,`v`,`g`,`r` are typed `float \| None` but `i` is typed `str \| None` (`schemas/catalog_objects.py`) | The one field typed as a string is the only one where a caller can write `<13` and get the intended behaviour. The inconsistency is almost certainly how the equality problem was worked around in practice | One typed constraint shape for all bands |
+| 4 | User-supplied values reach a remote query language unvalidated | Not a Skycat-side injection (VizieR filters cannot escape into SQL), but it is an unvalidated pass-through to a third-party parser, and the opposite of `QualityFilter`'s allow-listed, parameter-bound design | Allow-listed columns, six operators, values rendered by Skycat |
+| 5 | `ra_j2000=row["RAJ2000"] / 15` | The field is **named degrees and holds hours**, in a public API response schema. The `/15` is the legacy `ra_hours` convention leaking through a field called `ra_j2000` | Degrees everywhere; the conversion is one named function at the boundary (§4.3) |
+| 6 | `catalog="APASS9"` | VizieR's DR9 — a release Skycat does not have and cannot reconcile with DR6 or DR10, served through an endpoint whose name says only "apass" | `_designation` on every row; the catalog def carries `mirrors_release` explicitly (§4.4) |
+| 7 | No timeout, no retry, no error mapping | A CDS stall becomes a hung request in the public API's worker pool | Explicit `service_timeout_s`, a bounded retry policy, and `RemoteCatalogError` (§4.7) |
+| 8 | `ra_deg`, `dec_deg`, `radius_deg` are all `float \| None` with no default | A call with no parameters reaches `SkyCoord(ra=None, dec=None)` | Required arguments, validated by `validate_radec` before anything is sent |
+
+Defect 2 is the one to weigh: this endpoint has shipped magnitude filtering that
+almost certainly returns empty results, and nothing would have surfaced it,
+because an empty cone is a legitimate answer. It is the same failure signature as
+§2.3's NOMAD example and §2.4's VSX validation error — **the remote path fails by
+returning nothing, not by raising** — and it is the single strongest argument for
+R1 (a parity harness that knows what the answer should be) preceding R3
+(shipping the query).
+
+### 2.8 The local-first router — downstream, and why routing stays there
+
+The routing this note might otherwise propose has already been built, in
+`skynet-db`, as a `LocalFirstCatalog` mixin placed in front of the VizieR
 providers (`APASSCatalog(LocalFirstCatalog, VizierCatalog)`), overriding only
 `query_circ` / `query_box` / `query_objects`:
 
@@ -359,533 +565,1180 @@ with modes `local_first` (default) / `local_only` / `remote_only`, plus
 `SKYCAT_REMOTE_FALLBACK`, `SKYCAT_FALLBACK_ON_EMPTY`, `SKYCAT_LOCAL_FAMILIES`,
 and per-family release pins (`SKYCAT_APASS_RELEASE=DR10`).
 
+This is the right place for it: it is where `CatalogSource`/`mags` — the shape
+routing normalises into — actually lives. Moving it into Skycat would invert the
+dependency, forcing Skycat to learn the consumer's vocabulary or invent a third
+shape neither side wants. §1.3.1 and §1.3.2 are that conclusion as a rule.
+
+What Skycat's two readers give this layer is *better ends to route between*: a
+`RemoteCatalogReader` it can call instead of a `VizierCatalog` subclass, with a
+declared failure taxonomy and no global state.
+
 **Caveat on currency:** that code is not in the current `skynet` working tree.
 `catalogs/local/` contains only a stale `__pycache__` (`backend`, `config`,
 `engine`, `errors`, `health`, `normalize`, `routing`) — the sources live on
 `feat/skycat` / `add-landholt-and-stetson`, unmerged into
-`pipeline/analysis-descriptive-split`. Confirm the branch state before treating
-it as shipped. What the artifacts do establish is that the design was worked
-through and implemented once already, at the consumer layer, where the
-`CatalogSource`/`mags` shape it normalises into actually lives.
+`pipeline/analysis-descriptive-split`. Confirm the branch state (open item 1)
+before treating it as shipped.
+
+### 2.9 What the inventory establishes
+
+1. **A VizieR catalog is data, not code** (§2.3). Twelve lines of configuration
+   added a 1.1-billion-row catalog. Ten classes differing only in class
+   attributes is a worse encoding of the same table.
+2. **Untyped declarative tables fail silently** (§2.3, §2.4, §2.7 defect 2). Three
+   independent instances of the same signature: the remote path returns nothing
+   and raises nothing.
+3. **The plugin layer gets bypassed when it is hard to reuse** (§2.7). A
+   supported, importable reader is the thing that stops the next hand-rolled
+   route.
+4. **SIMBAD is unserved and unservable locally** (§2.6), and its current
+   implementation can disable itself permanently at import.
+5. **Config that documents the opposite of what runs is worse than no config**
+   (§2.4). Any setting `RemoteCatalogReader` exposes must be read by exactly one
+   place and covered by a test that would fail if it stopped being read.
 
 ---
 
-## 3. What Skycat is today, and what that constrains
+## 3. What Skycat is today, and which contracts the remote reader must not touch
 
-The contracts a remote path would have to satisfy or explicitly break.
+The invariants the design is bounded by. These are properties of the *existing*
+package that must read identically after the remote work lands.
 
-**The row shape is typed columns, not bands.** `cone_search` returns
-`dict(row)` over the release's actual table columns —
-`native_id, ra_deg, dec_deg, johnson_v_mag, johnson_v_err_mag, sloan_g_mag, …,
-extra, separation_deg`. There is no `mags` dict, no `ra_hours`, no
-`CatalogSource`. Column names carry units by convention. A VizieR row for a
-family Skycat does not model has no such columns to fill.
+**The row shape is typed columns, not bands.** `cone_search` returns `dict(row)`
+over the release's actual table columns — `native_id, ra_deg, dec_deg,
+johnson_v_mag, johnson_v_err_mag, sloan_g_mag, …, extra, separation_deg`. There is
+no `mags` dict, no `ra_hours`, no `CatalogSource`. Column names carry units by
+convention. §4.3 keeps this and adds only underscore-prefixed metadata keys,
+which [api-stability.md](../reference/api-stability.md) already permits ("new
+keys may be added — index by key, never by position").
 
 **Spatial work happens in the database, always.** Decision 0001 is accepted and
 implemented: no SQLite, no Python-side spatial fallback. `separation_deg` comes
-from `ST_Distance(geom, point, false)`.
+from `ST_Distance(geom, point, false)`. §4.3 addresses the one place the remote
+path computes a distance in Python and why that is not a 0001 exception.
 
-**Every answer is attributed to a release.** `resolve_release_for_query` returns
-a `ResolvedRelease` (family, data table, release id, name, state) before a query
-runs, and `--release` exists so results are reproducible. A remote row has no
-release.
+**Every answer is attributed to a release.** `resolve_release_for_query` returns a
+`ResolvedRelease` (family, data table, release id, name, state) before a query
+runs, and `--release` exists so results are reproducible. **A remote row has no
+release, and the design's answer is to not have one** rather than to synthesise
+one (§4.3).
 
 **The dependency set is five libraries.** `sqlalchemy`, `geoalchemy2`,
 `psycopg[binary]`, `alembic`, `click`. No numpy. No astropy. That is not an
-accident for a package whose deployment target is a one-shot Kubernetes Job.
+accident for a package whose deployment target is a one-shot Kubernetes Job, and
+§5.1 is how it stays true.
 
-**There is deliberately no plugin framework.** Adding a family is six explicit
-touch points. `catalog_defs.py` is the single source of truth for what exists,
-and `importer_available=False` is how a family that is *declared* but not
-*ingestible* fails fast rather than half-importing.
+**There is deliberately no plugin framework.** Adding a *local* family is six
+explicit touch points; `catalog_defs.py` is the single source of truth. §4.4
+argues why a remote catalog table is not a violation of that: the six touch
+points are a parser, a typed model, a migration, a validation module, a registry
+entry and docs — and a remote catalog has none of the first four, because it has
+no local schema to design. That argument belongs in decision 0002 (R0), not
+in an implementation PR.
 
 **Exit codes are a contract.** `CatalogConfigError` → 2;
-`CatalogQueryError`/`IngestionError`/`ReleaseStateError` → 1. A network failure
-class would need to land somewhere in that taxonomy, and the K8s Job reads it.
+`CatalogQueryError`/`IngestionError`/`ReleaseStateError` → 1, read by the K8s
+ingest Job. A new network failure class must land in that taxonomy deliberately
+(§4.7).
 
-**`SKYCAT_DATA_ROOT` is read-only.** "Skycat never downloads anything.
-Mirroring is a deliberate, separate step, which is what makes a release
-reproducible — an importer that fetched from the network would produce a
-different result on a different day."
+**`SKYCAT_DATA_ROOT` is read-only.** "Skycat never downloads anything. Mirroring
+is a deliberate, separate step, which is what makes a release reproducible."
+Unchanged: §1.3.3.
 
----
-
-## 4. Option-by-option feasibility
-
-### Option A — query-time remote fallback
-
-`CatalogReader.cone()` tries PostGIS; on unavailability (or emptiness) it queries
-VizieR, normalises, and returns rows in the same shape.
-
-**Feasible?** Technically, for the four families Skycat models — `apass`, `vsx`,
-`landolt`, `stetson` all have VizieR counterparts, and mapping VizieR columns
-onto Skycat's typed columns is mechanical.
-
-**Recommended?** No, for three independent reasons, any one of which is
-sufficient.
-
-1. **Decision 0001 already rejects this argument in its general form.** Its
-   Python-fallback section is not about maths; it is about failure semantics:
-   *"A fallback is used when it matters most. The path taken when the fast one is
-   unavailable is the path taken during an incident, on an unfamiliar deployment,
-   by whoever is on call. A slow, subtly-different query path is worse than a
-   clear failure to connect, because the failure gets diagnosed and the wrong
-   answer does not."* Every word of that applies to a remote fallback, which is
-   additionally subject to CDS availability and rate limiting. Adding one would
-   require superseding 0001 or writing a decision record explaining why network
-   fallback is categorically different from in-process fallback. It is not
-   obvious that it is.
-
-2. **The data would not match** — see §5.2. This is the concrete blocker.
-
-3. **The layer already exists downstream**, in the place where its output shape
-   is native (§2.6). Moving it into Skycat inverts the dependency: Skycat would
-   have to learn the consumer's `CatalogSource`/`mags` vocabulary, or invent a
-   third shape that neither side wants.
-
-### Option B — remote-only families
-
-New coverage: PanSTARRS, 2MASS, Tycho-2, UCAC5, USNO-B1.0, SkyMapper served
-straight from VizieR, with no local ingestion. `architecture.md` already names
-these as "future families" following the same family/release pattern.
-
-**Feasible?** Yes, and this is the option with the most genuine upside. It also
-sidesteps §5.2 entirely — a family with *no* local release cannot disagree with
-one.
-
-**The design constraint that keeps it honest:** it must not pretend to be the
-local path. `CatalogReader.cone("panstarrs", …)` returning remote rows through
-the same method that returns local ones means every caller's error handling,
-latency budget, timeout semantics and reproducibility guarantee silently change
-based on which family string was passed. Prefer either a separate class
-(`RemoteCatalogReader`) or an explicit opt-in with a distinguishing key in every
-returned row (`_source: "remote"`, `_release: None`).
-
-**The shape it should take, if it happens:** declarative, per §2.3. Afterglow
-already proved that a VizieR catalog is twelve lines of data — designation, row
-limit, column mapping, band mapping. Ten classes that differ only in their class
-attributes is a worse encoding of the same table.
-
-This runs into a stated position: *"There is deliberately no plugin or
-registration framework; adding a family is six explicit touch points."* The
-tension resolves cleanly, though, because the six touch points are all about
-things a remote family does not have — a parser, a typed model, a migration, a
-validation module. A remote family has no local schema to design, so the reason
-for the explicitness does not apply to it. That argument belongs in a decision
-record, not in an implementation PR.
-
-**Recommended?** Defer until a consumer asks. `skynet-db` has working remote
-providers for all six; Skycat would be re-housing code that is not currently
-broken, and would inherit the maintenance of the transformation tables in §2.2
-along with it.
-
-### Option C — automated acquisition
-
-**Feasible but wrong-tool.** astroquery's VizieR interface is a cone/region/
-object query API. Pulling 128M APASS rows or 4.9M Stetson rows through it means
-either `row_limit=-1` on an all-sky query — which CDS will refuse or throttle,
-and rightly so — or tiling the sky into millions of cone queries. The bulk
-distribution channel is `https://cdsarc.cds.unistra.fr/ftp/<designation>/`, and
-`provenance.md` already documents the `wget --timestamping` recipe for it,
-including the `--cut-dirs` depth trap and why preserving upstream mtimes matters
-for the manifest checksum. APASS comes from AAVSO, not CDS, at all.
-
-The one genuinely useful thing astroquery could contribute here is *metadata*:
-`Vizier.find_catalogs()` / `get_catalog_metadata()` could verify that a
-`reference_url` designation still resolves and has not been superseded
-(`II/183` → `II/183A`), which `provenance.md` explicitly warns about. That is a
-lint check, not an acquisition path, and it belongs in D.
-
-### Option D — parity harness
-
-A `postgis`-marked, network-marked, dev-only test that takes a handful of fixed
-fields, runs `CatalogReader.cone()` against a local release, runs the equivalent
-VizieR cone for the designation that release mirrors, and asserts agreement on
-positions and magnitudes within tolerance.
-
-**Feasible?** Yes, and the affordances already exist. `--release` is documented
-as a parity-testing affordance precisely so `landolt` can be compared against
-`II/183A = Landolt 1992` while `2009` is active. Skycat's Landolt and Stetson
-parsers were written to reproduce the remote coordinate arithmetic exactly; a
-parity test is what makes that claim checkable rather than asserted.
-
-**Recommended?** Yes. It is the only option that converts astroquery from a
-runtime dependency into a verification instrument, which is the role it is
-actually good at here.
-
-Where it must be careful: the comparison is only meaningful where local and
-remote mirror the *same* upstream snapshot. That is `landolt` `1992` and
-`stetson` `stetsonglobs`. It is **not** `apass` (§5.2) and it is only loosely
-`vsx` (a living index, sampled at different times). Encode that as data — a
-table of (family, release, VizieR designation, comparable: yes/no/approximate) —
-so the untestable cases are documented rather than quietly omitted.
+**Quality filters are allow-listed and parameter-bound.** `QualityFilter`
+validates the column against the table's real columns, the operator against six
+comparisons, and binds the value — "callers may therefore build these from
+untrusted input" (`skycat/query/cone.py:46`). The remote equivalent must earn the
+same sentence or not claim it (§4.6).
 
 ---
 
-## 5. The difficulties, in detail
+## 4. The design
 
-Ordered by how likely each is to sink an implementation.
-
-### 5.1 Dependency weight
-
-astroquery 0.4.11 (current stable; `skynet` pins 0.4.10 across three
-requirements files) declares:
+### 4.1 Module layout
 
 ```
-numpy>=1.20, astropy>=5.0, requests>=2.19, beautifulsoup4>=4.8,
-html5lib>=0.999, keyring>=15.0, pyvo>=1.5
+skycat/
+  client.py            # CatalogReader — UNCHANGED, no import from remote/
+  remote/
+    __init__.py        # RemoteCatalogReader, RemoteCatalogError, RemoteCatalogDef
+    reader.py          # the class: cone(), resolve(), describe(), close()
+    defs.py            # the declarative catalog table (frozen dataclasses)
+    mapping.py         # VizieR row → Skycat dict; sexagesimal; hours→degrees; sentinels
+    vizier.py          # transport: the astroquery/TAP client, timeouts, retries
+    simbad.py          # transport: name resolution
+    errors.py          # RemoteCatalogError and its subclasses
 ```
 
-astropy transitively adds `pyerfa`, `PyYAML`, `packaging`; `keyring` on Linux
-adds `SecretStorage`/`jeepney`. So a package that today installs five
-database-and-CLI libraries would install roughly twenty, including a numerical
-stack and a **desktop credential-store library, inside a headless Kubernetes
-Job**. Wheel size, image build time, and CVE surface all move accordingly.
+Two hard rules, both enforceable by a test:
 
-There is a second-order problem. The vault records that Skycat was deliberately
-*not* made a hard dependency of `skynet-db`, because doing so "would invalidate
-every service's frozen `uv.lock`". If Skycat takes a hard astroquery dependency
-with a different constraint than `skynet`'s pinned `0.4.10`, the same class of
-lockfile conflict reappears from the other direction, in a repository that
-cannot resolve it unilaterally.
+- **`skycat/client.py` never imports `skycat.remote`.** A grep test asserts it.
+- **`import skycat` never imports astroquery.** The astroquery import lives
+  inside `skycat/remote/vizier.py` and `simbad.py` at *call* time or behind a
+  module-level guarded import that `skycat/__init__.py` does not touch. A test
+  asserts `"astroquery" not in sys.modules` after `import skycat`.
 
-**Mitigation, and it is a good one:** an optional extra. `skycat[remote]` or
-`skycat[dev]` keeps the default install at five dependencies and makes the
-import guarded. Option D needs only the `dev` extra. Options A and B do not get
-off this cleanly — a *runtime* optional dependency means "does the fallback
-exist" becomes deployment-dependent, which is precisely the ambiguity §4A warns
-about.
+`RemoteCatalogReader` is exported from `skycat.remote`, **not** from `skycat`'s
+top level in phase 1–3. Promoting it to `skycat.__all__` is a stability
+commitment and should follow, not precede, a consumer using it.
 
-### 5.2 Release identity — the concrete blocker
+### 4.2 The surface
 
-**VizieR does not carry the APASS release Skycat serves.**
+```python
+class RemoteCatalogReader:
+    def __init__(
+        self,
+        *,
+        service_timeout_s: float = 30.0,
+        row_limit: int = 5000,
+        vizier_server: str | None = None,
+        user_agent: str | None = None,
+        cache_dir: str | None = None,
+    ) -> None: ...
 
-| Family | Skycat releases | Legacy VizieR ID | What VizieR actually serves |
+    @classmethod
+    def from_env(cls, **kwargs) -> "RemoteCatalogReader": ...
+
+    def catalogs(self) -> list[RemoteCatalogDef]: ...
+    def describe(self, catalog: str) -> dict: ...
+
+    def cone(
+        self,
+        catalog: str,
+        ra_deg: float,
+        dec_deg: float,
+        *,
+        radius_deg: float | None = None,
+        radius_arcmin: float | None = None,
+        radius_arcsec: float | None = None,
+        limit: int = 100,
+        mag_band: str | None = None,
+        mag_min: float | None = None,
+        mag_max: float | None = None,
+        order_by: str | None = None,
+    ) -> list[dict]: ...
+
+    def resolve(self, name: str, *, limit: int = 25) -> list[dict]: ...
+
+    def close(self) -> None: ...
+    def __enter__(self) -> "RemoteCatalogReader": ...
+    def __exit__(self, *_exc) -> None: ...
+```
+
+Deliberate parallels: `radius_deg`/`radius_arcmin`/`radius_arcsec` reuse
+`radius_to_deg` verbatim (`skycat/query/cone.py:112`), so "exactly one of" means
+the same thing on both readers. `limit`, `mag_band`, `mag_min`, `mag_max`,
+`order_by` keep their local meanings.
+
+Deliberate non-parallels, each a signal rather than an omission:
+
+- **First argument is `catalog`, not `family`.** Different vocabulary for a
+  different namespace. `RemoteCatalogReader.cone("apass", …)` is a *different
+  catalog* from `CatalogReader.cone("apass", …)` — VizieR's DR9 versus the local
+  active release — and the parameter name is the first place to say so.
+- **No `release=`.** There is nothing to select.
+- **No `crossmatch()`.** §4.10.
+- **No `quality_filter=`** in phase 3. §4.6.
+- **`resolve()` exists here and nowhere else.** §4.5.
+
+### 4.3 The row shape
+
+Rows are `dict`, same as local. Columns use Skycat naming — units in the name,
+degrees not hours, `NULL` (`None`) for missing, never a sentinel. Metadata rides
+in reserved underscore-prefixed keys, which cannot collide with a catalog column
+because no VizieR column name maps to one:
+
+| Key | Type | Meaning |
+|---|---|---|
+| `_source` | `"remote"` | Distinguishes a row at the row level, not just in the docs. A consumer persisting a calibration can tell from the data whether it is reproducible |
+| `_service` | `"vizier"` \| `"simbad"` | Which service answered |
+| `_designation` | `str` | The exact VizieR designation queried, e.g. `"I/259/tyc2"` |
+| `_retrieved_at` | ISO-8601 UTC `str` | When. Not a provenance guarantee — a timestamp |
+| `extra` | `dict` | Untranslated VizieR columns, mirroring the local `extra` JSONB convention. Where a local row carries per-band observation counts, a remote row carries whatever the service returned that the mapping did not name |
+
+There is **no** `release`, `release_id` or `release_name` key. Absence is the
+honest encoding; a synthetic `"vizier:II/336"` would be honest about origin but
+would then be a release the registry does not know, that `--release` cannot
+select, and that a naive consumer would happily store in a column expecting a
+foreign key.
+
+**`separation_deg` is computed in Python, and that is not a decision-0001
+exception.** 0001 bans a Python-side *spatial query path* — filtering and
+indexing decisions made outside the database. Here the remote service did the
+filtering; Skycat is annotating rows it was given with a great-circle distance.
+The risk is not correctness-by-architecture, it is *two implementations of one
+number*, which is a real risk and gets a real answer: one documented haversine in
+`skycat/remote/mapping.py`, and an R1 test that asserts it agrees with
+`ST_Distance(…, false)` to sub-milliarcsecond over a grid of positions including
+the poles and the RA 0/360 seam. The same `POSTGIS_SPHERE_RADIUS_M` constant
+feeds both.
+
+**Sentinels are declared, not global.** The legacy `val and val < 99` rule is
+carried over as a per-column `null_above: float | None` in the catalog def, so
+`99.99` in a magnitude column becomes `None` and a genuine `0.0` magnitude
+survives — the legacy `val and …` truthiness test drops it. Rows are **never**
+dropped for having no magnitudes; a positional row is a legitimate result (§2.1).
+
+### 4.4 The declarative catalog table
+
+Per §2.3 and §2.9.1: data, not classes. Per §2.3's NOMAD bug: typed, not dicts.
+
+```python
+@dataclass(frozen=True)
+class RemoteColumn:
+    """One output column, its VizieR source, and how to read it."""
+    name: str                       # Skycat name, units included: "vt_mag"
+    vizier: str                     # VizieR column: "VTmag"
+    kind: Literal["float", "int", "str"] = "float"
+    null_above: float | None = None  # sentinel → None (the legacy `< 99` rule)
+
+@dataclass(frozen=True)
+class RemoteCatalogDef:
+    key: str                        # "tycho2" — the ONLY name. §2.2's mismatch bug
+    designation: str                # "I/259/tyc2"
+    display_name: str
+    native_id: RemoteColumn
+    ra: RemoteColumn                # declared in degrees; hours→deg at the boundary
+    dec: RemoteColumn
+    columns: tuple[RemoteColumn, ...]
+    default_row_limit: int = 5000
+    default_order_by: str | None = None
+    approx_row_count: int | None = None
+    reference_url: str = ""
+    # Honesty fields — the answer to §5.2, in the data
+    mirrors_family: str | None = None      # "apass" if a local family covers this sky
+    mirrors_release: str | None = None     # "DR9" — what VizieR actually serves
+    comparable: Literal["yes", "no", "approximate"] = "no"
+    comparable_note: str = ""
+```
+
+Four properties that follow from the shape:
+
+1. **One key per catalog.** §2.2's `Tycho`/`Tycho2` registry-key/`name` mismatch
+   is unrepresentable.
+2. **No expressions, no `eval`.** Where the legacy table used a Python expression
+   (`RAJ2000/15`, the Tycho-2 `str.format` id, the sexagesimal splits), the
+   mapping layer has a named, tested function selected by `kind` and by explicit
+   composite-id support. Nothing from the def is ever `compile()`d or `eval`'d.
+   §5.7.
+3. **`mirrors_*` and `comparable` put §5.2 in the data.** `apass` gets
+   `mirrors_family="apass", mirrors_release="DR9", comparable="no",
+   comparable_note="VizieR serves DR9; Skycat serves DR6 and DR10. No overlap."`
+   The parity harness reads the same table (§8), so an untestable case is
+   documented rather than quietly omitted.
+4. **pyright can see all of it**, which `type(classname, (VizierCatalog,), kw)`
+   made impossible.
+
+Whether the table lives in code (`skycat/remote/defs.py`, mirroring
+`catalog_defs.py`) or is loadable from operator config is a real question that
+R3 should answer with "code first". `CUSTOM_VIZIER_CATALOGS` is the
+attractive precedent and also the cautionary one: config-defined catalogs exist in
+no repository, cannot be reviewed, and — in that exact case — silently returned
+nothing. If external definitions are ever added, they load through the same
+frozen dataclasses with a validation error at construction, never a duck-typed
+dict.
+
+### 4.5 SIMBAD is a resolver, not a catalog
+
+`resolve(name)` returns a list of dicts, not catalog rows:
+
+```python
+{"name": "M  31", "object_type": "Galaxy", "otype": "G",
+ "ra_deg": 10.6847, "dec_deg": 41.2687,
+ "_source": "remote", "_service": "simbad", "_retrieved_at": "..."}
+```
+
+Requirements, each answering a numbered defect in §2.6:
+
+| §2.6 | Requirement |
+|---|---|
+| 1 | **No import-time network call and no permanent disable.** The SIMBAD client is constructed lazily on first `resolve()`, and a construction failure raises `RemoteServiceError` on *that call* and is retried on the next. A one-off CDS blip must not silently remove a capability for the process lifetime |
+| 2, 3 | **Pin `astroquery >= 0.4.8`** in the extra and assert the post-TAP column names in a fixture test, so a resolution that returns sexagesimal strings fails loudly. Drop the vestigial `Angle(…, unit=u.degree)` wrap — the value is float degrees; validate it with `validate_radec` instead |
+| 4 | **Do not transform the query string.** Pass what the caller gave |
+| 5 | **`limit` bounds the result list**, unconditionally, on every path |
+| 6 | **Return ICRS degrees and say so.** Do not stamp a J2000 epoch onto a row Skycat did not compute. If a consumer needs proper-motion propagation, that is the consumer's, and `extra` carries `pmra`/`pmdec` when the service returns them |
+| 7 | **Structured logging under `skycat.remote`**, matching the `skycat.ingestion` event convention in [runbook.md](../operations/runbook.md); no `print` |
+
+The `otype` → human-label mapping (200 entries) is **consumer presentation**, and
+by the §1.3.4 rule it does not move into Skycat. `resolve()` returns the raw
+`otype` and, where astroquery supplies it, the service's own long-form label. The
+public API keeps its dict.
+
+### 4.6 Constraints, ordering and limits
+
+The three semantic gaps that make a remote cone not a local cone, and the
+position taken on each:
+
+| Skycat local | Remote | Position |
+|---|---|---|
+| `order_by="johnson_v_mag"` → ascending, NULLs last, numeric-only, validated against the table (`cone.py:78`) | VizieR `sort=['+Bmag']`, server-side, no null policy, no tiebreak | Accept `order_by`, validate it against the def's declared columns, translate to the VizieR sort key. **Document that NULL ordering is service-defined**; do not claim parity |
+| `limit` applied after ordering, in SQL | `row_limit` applied by the server with unspecified interaction with `sort` | Request `row_limit = limit` and additionally truncate client-side after the mapping. A capped remote cone and a capped local cone still select different stars in a dense field — that is inherent, and it is stated in the docstring rather than papered over |
+| `QualityFilter`: allow-listed column, six operators, bound value, safe for untrusted input | `column_filters`, a string mini-language (`>10`, `<=5`, `!=0`, ranges) | **R3 ships `mag_min`/`mag_max` only** — rendered by the mapping layer into `">=12.0 & <=18.0"`, never passed through (§2.7 defect 2). A general remote `QualityFilter` is R4+, and it must translate through the same allow-list, with an explicit `RemoteConstraintError` for anything untranslatable. Never silently drop a constraint: a filter that did not apply returns wrong rows, and that is the §2.7-defect-2 failure signature again |
+
+### 4.7 Failure taxonomy
+
+```
+RemoteCatalogError(RuntimeError)          # base — NOT a CatalogQueryError
+├── RemoteServiceError                     # HTTP 5xx, DNS, connection reset
+├── RemoteTimeoutError                     # service_timeout_s exceeded
+├── RemoteRateLimitError                   # 429 / CDS throttle
+├── RemoteResponseError                    # malformed VOTable, unexpected columns
+├── RemoteConstraintError                  # a constraint that cannot be translated
+└── RemoteCatalogNotFound                  # unknown key, or a designation that 404s
+```
+
+**Not a subclass of `CatalogQueryError`**, on purpose. `except CatalogQueryError`
+in existing consumer code means "the database said no" and must not start
+catching "CDS is down". Adding `RemoteCatalogError` to `skycat`'s exception
+exports is an api-stability addition (a new name, not a repurposed one) and gets
+a release note.
+
+CLI mapping in `_FriendlyGroup`: `RemoteCatalogError` → **exit 1** (operational
+failure), joining `CatalogQueryError`/`IngestionError`/`ReleaseStateError`. A
+missing `skycat[remote]` extra is a **configuration** failure → `CatalogConfigError`
+→ exit 2, with a message naming the extra. Both rows go into
+[api-stability.md](../reference/api-stability.md) in the same commit as the code,
+because `tests/test_docs.py` will not let them diverge.
+
+Retries: bounded, on `RemoteServiceError`/`RemoteRateLimitError`/`RemoteTimeoutError`
+only, with jittered backoff and a hard ceiling inside `service_timeout_s`, so the
+timeout the caller set is the timeout the caller gets. Never retry a 4xx.
+
+### 4.8 Transport — prefer TAP
+
+The legacy plugins use astroquery's `viz-bin/votable` POST path. Two reasons to
+target TAP instead where it is available:
+
+- **SIMBAD is already there.** astroquery 0.4.8 rewrote the SIMBAD module onto
+  SIMBAD's TAP interface; `Simbad.query_tap()` takes ADQL. The current
+  `query_object` path is TAP underneath.
+- **VizieR has a TAP endpoint** (`TAPVizieR`, reachable through `pyvo`, which is
+  already an astroquery dependency). Whether its batch semantics are good enough
+  to change the §4.10 crossmatch verdict is open item 5 and should be measured in
+  R3, not assumed.
+
+Either way the transport is isolated behind `skycat/remote/vizier.py` so the
+choice is revisitable without touching the mapping layer or the reader surface.
+Design for one server, configured once, read in exactly one place (§2.9.5), with
+`vizier_server` defaulting to an explicit constant rather than to whatever
+astroquery happens to default to — the ambiguity §2.4 documents.
+
+### 4.9 Caching
+
+Default **off**, matching what the skynet fork actually does (as opposed to what
+its config says).
+
+If it is ever turned on, two rules, both of which the legacy implementation
+broke:
+
+1. **Never quantise the query to improve hit rates.** §2.4's 10-arcsec centre and
+   0.2-arcmin radius rounding changes the returned set as a function of position.
+   A cache that returns a different answer than the uncached path is not a cache.
+2. **Cache location is explicit and container-safe.** astroquery caches to
+   `astropy` config dirs, which are user-scoped, not container-scoped, and which
+   the legacy code had to prune by hand. `cache_dir` is a constructor argument and
+   a `SKYCAT_REMOTE_CACHE_DIR` variable; on a read-only container filesystem, no
+   configured dir means no cache, not a crash.
+
+No monkey-patching of `astroquery.query` internals under any circumstances
+(§2.4, §5.7).
+
+### 4.10 What has no remote analogue
+
+**`batch_crossmatch` is not offered, and the reason is not performance.** Locally
+it is a `COPY` of the inputs into a TEMP table, one `LATERAL` join, one round
+trip. Remotely it is N HTTP requests: for a 5,000-source frame that is a
+different operation with different failure modes, not a slow version of the same
+one. Offering it under the same name would be the §1.2 problem in miniature.
+
+If a consumer genuinely needs remote crossmatch, the honest options are CDS's own
+X-Match service or a TAP upload join — both separate designs with separate
+semantics, and both out of scope here.
+
+**Provenance has no remote analogue either** (§5.5). `_retrieved_at` is a
+timestamp, not a checksum. This is stated in the row shape rather than
+approximated.
+
+### 4.11 Designation lint
+
+`describe(catalog)` returns the def plus live service metadata
+(`Vizier.find_catalogs()` / `get_catalog_metadata()`), which makes it possible to
+check that a `reference_url` designation still resolves and has not been
+superseded — `II/183` → `II/183A` is the hazard
+[provenance.md](../guides/provenance.md) names specifically. As a scheduled CI
+job rather than a runtime path, this is the cheapest real value in the whole
+plan and it belongs in R5.
+
+### 4.12 Configuration
+
+All new variables are prefixed `SKYCAT_REMOTE_` and documented in the README's
+configuration table in the same commit (§5.9 explains why the prefix matters):
+
+| Variable | Default | Read by |
+|---|---|---|
+| `SKYCAT_REMOTE_VIZIER_SERVER` | an explicit constant, not astroquery's default | `remote/vizier.py`, once |
+| `SKYCAT_REMOTE_TIMEOUT_S` | `30.0` | `remote/reader.py`, once |
+| `SKYCAT_REMOTE_ROW_LIMIT` | `5000` | `remote/reader.py`, once |
+| `SKYCAT_REMOTE_CACHE_DIR` | unset → no cache | `remote/vizier.py`, once |
+| `SKYCAT_REMOTE_USER_AGENT` | `skycat/<version>` | `remote/vizier.py`, once |
+
+Each has a test that fails if the variable stops being read — the direct answer
+to §2.4's dead-config problem.
+
+---
+
+## 5. Risks, and how the split handles each
+
+Ordered by how likely each is to sink the implementation. These are the
+feasibility study's difficulties, re-scored against the adjacent-reader design.
+
+### 5.1 Dependency weight — **handled by the extra; verify at CI**
+
+astroquery 0.4.11 (current stable, confirmed on PyPI) declares `numpy>=1.20`,
+`astropy>=5.0`, `requests>=2.19`, `beautifulsoup4>=4.8`, `html5lib>=0.999`,
+`keyring>=15.0`, `pyvo>=1.5`. astropy transitively adds `pyerfa`, `PyYAML`,
+`packaging`; `keyring` on Linux adds `SecretStorage`/`jeepney`. A package that
+installs five libraries would install roughly twenty, including a numerical stack
+and a **desktop credential-store library inside a headless Kubernetes Job**.
+
+The second-order problem is lockfiles. Skycat was deliberately *not* made a hard
+dependency of `skynet-db` because that "would invalidate every service's frozen
+`uv.lock`". `skynet` pins `astroquery==0.4.10` in three requirements files and
+`skylib` declares `~= 0.4.9`. A hard astroquery dependency in Skycat with a
+different constraint reproduces that conflict from the other direction, in a
+repository that cannot resolve it unilaterally.
+
+**Handled:** optional extra `skycat[remote]`, declared as `astroquery >= 0.4.8`
+(the TAP/lowercase-columns floor, §2.6) with no upper pin that would conflict
+with `skynet`'s `0.4.10`. Default install stays at five. The CI wheel-install
+smoke test gets a second assertion: the default wheel imports with astroquery
+absent, and `import skycat` leaves `sys.modules` without it (§4.1).
+
+### 5.2 Release identity — **handled by having no release**
+
+**VizieR does not carry the APASS release Skycat serves.** Re-verified 2026-08-07:
+VizieR hosts APASS DR9 as `II/336/apass9`; DR10 is public but, in AAVSO's own
+words, "cannot be automatically queried" and is distributed directly by AAVSO.
+
+| Family | Skycat releases | VizieR designation | What VizieR serves |
 |---|---|---|---|
-| `apass` | DR6, **DR10** | `II/336` | **DR9** — and DR10 is not queryable through VizieR at all; AAVSO distributes it directly |
-| `landolt` | **1992**, 2009 | `II/183A` | 1992 ✓ (2009 = `J/AJ/137/4186`, which the legacy plugin does not use) |
+| `apass` | DR6, **DR10** | `II/336` | **DR9** — no overlap with either |
+| `landolt` | **1992**, 2009 | `II/183A` | 1992 ✓ (2009 = `J/AJ/137/4186`, unused by the legacy plugin) |
 | `stetson` | stetsonglobs | `J/MNRAS/485/3042/table4` | same ✓ |
 | `vsx` | current | `B/vsx/vsx` | a mirror of a living index — no version, no snapshot identity |
 
-For APASS the overlap is **empty**. Skycat's DR6 and DR10 versus VizieR's DR9:
-a remote fallback on the `apass` family would serve a data release the local
-store does not contain and cannot be compared against, under the same
-`ResolvedRelease` API that exists to make answers reproducible. The photometry
-would be plausible and the provenance would be a fiction. APASS is also the
-largest and most-used family, so this is not an edge case — it is the main case.
+Under the old fallback framing this was the concrete blocker. Under the adjacent
+framing it is a labelling problem, and §4.4's `mirrors_family` / `mirrors_release`
+/ `comparable` fields are the label. A caller asking `RemoteCatalogReader` for
+`apass` gets DR9 rows stamped `_designation: "II/336/apass9"` and no release id;
+nothing can silently attribute them to a local DR10 release. `describe("apass")`
+says so in one call, and the parity harness reads the same three fields to
+exclude the pair from comparison.
 
-VSX is a softer version of the same problem: both sides are real VSX, sampled at
-unrelated times. The legacy plugin's stale `num_sources` (2.1M vs Skycat's 10.3M
-`approx_row_count`) is that gap made visible.
+### 5.3 Query semantics — **partly handled, partly documented**
 
-Only Landolt-1992 and Stetson are cleanly comparable, and both are small
-standards catalogs where the local store is never the bottleneck.
-
-Any Option A or B design has to answer: *what `release` does a remote row claim?*
-The honest answers are `None` (breaking the invariant that every row is
-attributed) or a synthetic `"vizier:II/336"` (honest, but then the row is not
-from any release the registry knows about, and `--release` cannot select it).
-Neither is free.
-
-### 5.3 Query semantics do not survive the trip
-
-Skycat's cone contract, clause by clause, against what VizieR gives back:
-
-| Skycat | VizieR / astroquery | Gap |
+| Skycat | VizieR | Disposition |
 |---|---|---|
-| `separation_deg` per row, from `ST_Distance(…, false)` | not returned | Compute in Python — the one place decision 0001's ban is arguably not implicated (no filtering), but it is still a second implementation of the same number |
-| `order_by="johnson_v_mag"` → brightest-first, NULLs last, separation tiebreak | `sort=['+Bmag']` server-side, no null policy, no tiebreak | Different row set under `limit`, not just a different order |
-| `limit` after ordering | `row_limit` applied by the server, semantics unspecified against `sort` | A capped remote query and a capped local query select different stars in a dense field |
-| `QualityFilter` — allow-listed column, one of six operators, bound parameter | `column_filters` — a string mini-language | Not all filters translate; `skynet`'s router has an explicit "untranslatable constraints" branch for exactly this |
-| `mag_min`/`mag_max` on a typed column | expressible as a `column_filter` | Translatable |
-| `batch_crossmatch` — `COPY` inputs to TEMP, one LATERAL join, one round trip | no batch primitive | N HTTP requests. For a 5,000-source frame this is not a slow version of the same thing; it is a different operation |
-| 30s statement timeout | `Vizier(timeout=…)`, plus retries, plus DNS | The timeout contract means something different |
-| Nearest-first default | server-defined | Under-specified on both sides, but differently |
+| `separation_deg` from `ST_Distance(…, false)` | not returned | Computed in Python, one implementation, parity-tested (§4.3) |
+| `order_by` ascending, NULLs last, separation tiebreak | server-side `sort`, no null policy | Translated; **null ordering documented as service-defined** (§4.6) |
+| `limit` after ordering | `row_limit`, unspecified vs `sort` | Requested and re-truncated; divergence in dense fields documented (§4.6) |
+| `QualityFilter` allow-listed and bound | `column_filters` mini-language | `mag_min`/`mag_max` rendered by Skycat in phase 3; general filters phase 4+ with `RemoteConstraintError` (§4.6) |
+| `batch_crossmatch` — one round trip | no batch primitive | **Not offered** (§4.10) |
+| 30s statement timeout | `Vizier(timeout=…)` + retries + DNS | `service_timeout_s` is a wall-clock ceiling including retries (§4.7) |
 
-`batch_crossmatch` is the one to weigh hardest. It is the operation the optical
-pipeline actually needs at scale, and it has no remote analogue that is not a
-loop.
+### 5.4 Schema impedance — **handled by the typed def, verified by the harness**
 
-### 5.4 Schema impedance
-
-For a family Skycat models, the mapping is mechanical but lossy in both
-directions:
+The mapping is mechanical but lossy in both directions, and every loss is a place
+the legacy code failed silently:
 
 - **Units and names.** `ra_hours` (÷15) versus `ra_deg`; `Vmag`/`e_Vmag` versus
-  `johnson_v_mag`/`johnson_v_err_mag`; `g'mag` (VizieR-renamed to `g_mag`)
-  versus `sloan_g_mag`.
-- **Sentinels versus NULL.** The legacy adapter keeps a magnitude only when
-  `val and val < 99`. Skycat's convention is that missing is `NULL`, never `0`,
-  never `99.999`. These agree in intent, but `val and val < 99` also drops a
-  genuine `0.0` magnitude — defensible for stellar photometry, still a rule that
-  would have to be restated and tested on Skycat's side.
-- **Dropped rows.** `table_to_sources` discards any source with no surviving
-  magnitudes. A Skycat cone returns positional rows regardless. A remote-backed
-  cone would silently return fewer rows than the equivalent local one, for
-  reasons invisible in the response.
-- **`extra` JSONB has no remote counterpart** — per-band observation counts, DR6
-  `B-V`, `mobs`. Remote rows would carry `extra: null` where local rows carry
-  data.
-- **Derived bands.** Landolt: local stores V + five colors, remote returns the
-  same, and U/B/R/I are derived by the *consumer* in both cases. Consistent
-  today — and it stays consistent only as long as Skycat does not start deriving
-  them to make remote rows "look complete".
+  `johnson_v_mag`/`johnson_v_err_mag`; `g'mag` (VizieR-renamed to `g_mag`) versus
+  `sloan_g_mag`. → declared per column in `RemoteColumn`, with the `'`→`_` retry
+  as a documented rule rather than an inline `try`.
+- **Sentinels versus NULL.** `val and val < 99` also drops a genuine `0.0`. →
+  `null_above` per column, and no truthiness test (§4.3).
+- **Dropped rows.** `table_to_sources` discards sources with no surviving
+  magnitudes; a Skycat cone returns positional rows regardless. → **never drop**
+  (§2.1).
+- **`extra` JSONB.** Local rows carry per-band observation counts, DR6 `B-V`,
+  `mobs`; remote rows carry the untranslated VizieR columns in the same key
+  (§4.3), so the key is always populated and always means "what this source
+  provided that the mapping did not name".
+- **Derived bands.** Landolt local stores V + five colours; remote returns the
+  same; U/B/R/I are derived by the consumer in both cases. Stays consistent
+  exactly as long as Skycat does not start deriving them to make remote rows look
+  complete (§1.3.4).
 - **`native_id` types differ.** APASS `recno` (int) versus Skycat `String(64)`;
-  VSX `OID` needed an explicit `str()` coercion in the legacy code after a
-  pydantic validation error silently disabled variable-star filtering. That
-  comment is still in `vsx_catalog.py` and is worth reading as a case study in
-  how these failures present (§2.4).
+  VSX `OID` needed an explicit `str()` after a pydantic validation error silently
+  disabled variable-star filtering (§2.4). → `RemoteColumn.kind` declares it, the
+  mapping coerces, and a fixture test covers each catalog's id column.
 
-### 5.5 Reproducibility and provenance
+### 5.5 Reproducibility — **handled by not claiming it**
 
-Skycat's central claim is that a release is rebuildable and provable: manifest
-or content checksum, `source_size_bytes`, `source_modified_at`,
-`importer_version`, `internal_schema_version`, and a five-step chain of custody.
+Skycat's central claim is that a release is rebuildable and provable: manifest or
+content checksum, `source_size_bytes`, `source_modified_at`, `importer_version`,
+`internal_schema_version`, and a five-step chain of custody. A remote row has
+none of it. `_source: "remote"` at the row level (§4.3) is what lets a consumer
+persisting a calibration tell, from the data, that it is not reproducible. The
+alternative — documenting it — is what §2.4 shows does not work.
 
-A remote row has none of it. Worse, the legacy cache-quantisation (§2.4) means
-the *same* remote call can return different rows depending on cache state and on
-rounding applied to the coordinates. Mixing that into a query path whose
-documented purpose includes "re-deriving old calibrations" is a category error.
+### 5.6 Operational surface — **new, and genuinely new**
 
-If Option B proceeds, remote rows should be marked at the row level, not just
-documented — a consumer that persists a calibration must be able to tell from
-the data whether it is reproducible.
+This is the risk the split reduces least, because it is inherent to talking to
+the network at all.
 
-### 5.6 Operational surface
+- **Network egress from a K8s Job.** Currently unnecessary; NetworkPolicy, proxies
+  and DNS become Skycat's problem *for deployments that install the extra*. The
+  ingest Job does not install it, so the ingestion path is unaffected — worth
+  stating in [runbook.md](../operations/runbook.md).
+- **CDS availability and rate limits** become the caller's availability. VizieR
+  has no SLA for programmatic bulk use. The reader sets a `User-Agent` naming
+  Skycat and its version so CDS can attribute load.
+- **A new failure taxonomy** — §4.7.
+- **Caching** — §4.9.
+- **Mirror choice.** `vizier.cds.unistra.fr` versus `vizier.cfa.harvard.edu` can
+  hold different snapshots. One configured server, one reader, one place it is
+  read (§4.12), and `_designation` does not disambiguate mirrors — open item 6.
 
-- **Network egress from a K8s Job.** Currently unnecessary; NetworkPolicy,
-  proxies and DNS all become Skycat's problem.
-- **CDS availability and rate limits** become Skycat availability. VizieR has no
-  SLA for programmatic bulk use, and the legacy code's whole caching apparatus
-  exists to reduce load on it.
-- **A new failure taxonomy.** Timeout, HTTP 5xx, malformed VOTable, rate-limited,
-  DNS. Each must map onto exit codes 0/1/2 and onto `CatalogQueryError` or a new
-  sibling — a change to a stable exception surface.
-- **Caching.** astroquery caches to `astropy` config dirs, which are
-  user-scoped, not container-scoped, and which the legacy code had to prune by
-  hand. In a read-only container filesystem this needs explicit configuration.
-- **`vizier_server` mirrors.** `vizier.cds.unistra.fr` versus
-  `vizier.cfa.harvard.edu` (commented out in the legacy config) can return
-  different snapshots. A third axis of "which data did I get".
+### 5.7 Code-quality gates — **the port is a rewrite, and that is the point**
 
-### 5.7 Code-quality gates
+| Legacy pattern | Skycat gate | Disposition |
+|---|---|---|
+| `except Exception: pass` ×3 in the astroquery monkey-patch | ruff `BLE001`, `S110` — errors | No monkey-patching (§4.9) |
+| `except Exception: val = None` in `table_to_sources` | `BLE001` | Typed coercion per `RemoteColumn.kind`; a coercion failure is a `RemoteResponseError`, not a silent `None` |
+| `eval(expr, ctx, {})` per row | no rule forbids it; it is the opposite of `_quality_clause` | No `eval`, no `compile` (§4.4.2) |
+| Untyped `mags: Dict[str, List[str]]` with `item[:2]` / `item[0]` fallbacks | pyright null-safety rules are errors and are at zero | Frozen dataclasses (§4.4) |
+| `type(classname, (VizierCatalog,), kw)` from unvalidated dicts | pyright cannot see the classes at all | No dynamic class creation |
+| `compile(...).co_names` column harvesting | works, but needs a *why* comment | Not carried over; the def lists its columns |
 
-Ported as-is, the legacy code does not pass this repository's CI:
+The rewrite has to re-derive the intent of expressions like the 2MASS `(J-K)`
+cubics from papers cited only by a URL in a comment — which is one more reason
+those tables stay downstream (§1.3.4).
 
-| Legacy pattern | Skycat gate |
-|---|---|
-| `except Exception: pass` ×3 in the astroquery monkey-patch | `ruff` `BLE001`, `S110` — errors |
-| `except Exception: val = None` in `table_to_sources` | `BLE001` |
-| `eval(expr, ctx, {})` per row | No rule forbids it, but it is the opposite of `_quality_clause`'s allow-listed, parameter-bound approach |
-| Untyped `mags: Dict[str, List[str]]` with `item[:2]` / `item[0]` fallbacks | `pyright` — the null-safety rules are errors and are at zero |
-| `compile(expr, '<string>', 'eval').co_names` column harvesting | Works; needs a comment explaining *why*, per this repo's convention |
-| `type(classname, (VizierCatalog,), kw)` from unvalidated config dicts (§2.3) | `pyright` cannot see the resulting classes at all; the `mags`-shape bug is exactly what a schema would have caught |
+### 5.8 Non-hermetic tests — **handled by two markers**
 
-None of this is unfixable. It does mean "port the plugins" is a rewrite, not a
-copy, and the rewrite has to re-derive the intent of expressions like the 2MASS
-`(J-K)` cubics from papers that are cited only by a URL in a comment.
+Network tests fail when CDS is slow, are the first thing disabled when CI gets
+flaky, and once disabled stop catching anything. §8 is the answer: recorded
+VOTable/TAP fixtures for the deterministic assertions, plus a separately-marked
+live test run on demand — mirroring how `postgis` already works, including the
+`--require-postgis` escalation that turns silent skipping into a hard failure.
 
-The `mags`-shape bug in §2.3 is the whole argument for typing the declarative
-table if Option B proceeds: a frozen dataclass with `tuple[str, str | None]`
-bands would have made the broken NOMAD example a startup error instead of a
-catalog that silently returns nothing.
+### 5.9 Namespace collision — **real, and the reason for the prefix**
 
-### 5.8 Testing
-
-Network tests are non-hermetic: they fail when CDS is slow, they are the first
-thing disabled when CI gets flaky, and once disabled they stop catching
-anything. The workable pattern is recorded fixtures (VOTable responses committed
-as test data) for the deterministic assertions, plus a separately-marked live
-test that is allowed to be run on demand rather than per-commit — mirroring how
-`postgis`-marked tests already work, including the `--require-postgis`
-escalation that turns silent skipping into a hard failure when it matters.
-
-`tests/test_docs.py` also asserts that every CLI flag and `CatalogReader` kwarg
-shown in the stable docs exists. Any new flag or kwarg from this work ships with
-its documentation in the same commit.
-
-### 5.9 Configuration namespace collision
-
-`skynet-db`'s routing layer already uses `SKYCAT_BACKEND`,
-`SKYCAT_REMOTE_FALLBACK`, `SKYCAT_FALLBACK_ON_EMPTY`, `SKYCAT_LOCAL_FAMILIES`,
-and `SKYCAT_<NAME>_RELEASE` — the *consumer's* routing config, in Skycat's
-namespace but not read by Skycat, whose own reader is `SKYCAT_DB_*` plus
-`SKYCAT_DATA_ROOT` / `SKYCAT_WORK_ROOT`. If Skycat introduces its own remote
-flags it will be the second thing reading `SKYCAT_*`, and a `SKYCAT_BACKEND` set
-for the pipeline could be silently reinterpreted. Namespace any new variables
-distinctly (`SKYCAT_REMOTE_*`) and say so in the README's configuration table.
+`skynet-db`'s routing layer already uses `SKYCAT_BACKEND`, `SKYCAT_REMOTE_FALLBACK`,
+`SKYCAT_FALLBACK_ON_EMPTY`, `SKYCAT_LOCAL_FAMILIES` and `SKYCAT_<NAME>_RELEASE` —
+the *consumer's* routing config, in Skycat's namespace but not read by Skycat.
+Note that `SKYCAT_REMOTE_FALLBACK` is already taken, by something Skycat must
+never implement. Every new variable is `SKYCAT_REMOTE_<NOUN>` naming a transport
+setting, never a routing decision (§4.12), and the README's configuration table
+gains a sentence saying which `SKYCAT_*` variables Skycat reads and which belong
+to the pipeline.
 
 ---
 
-## 6. Benefits
+## 6. Local coverage first — what to mirror, and what it costs
 
-Stated at full strength, because the recommendation is mostly negative and a
-one-sided case is not worth reading.
+Remote access earns its keep on catalogs that cannot be stored. Which catalogs
+those are is a measurement nobody has taken. This section takes it, at least to
+the accuracy the schema allows, and the conclusion reorders the plan: **four of
+the six catalogs the legacy plugin layer serves remotely are mirrorable on
+hardware Skycat already has, and one of them costs less than a gigabyte.**
 
-1. **Coverage without ingestion.** Six catalogs (PanSTARRS, 2MASS, Tycho-2,
-   UCAC5, USNO-B1.0, SkyMapper) become reachable with no mirror, no disk, no
-   import, no migration. PanSTARRS alone is 1.9 billion rows — a local mirror is
-   a serious infrastructure commitment, and for occasional use it is
-   unjustifiable. This is the strongest argument in the document.
-2. **One entry point for consumers.** A pipeline could ask `CatalogReader` for
-   any catalog and stop caring which are mirrored — the local-first goal, with
-   the routing decision made once instead of per-consumer.
-3. **Verifiable parity** (Option D). Skycat's parsers claim byte-exact agreement
-   with the remote provider's coordinate arithmetic and Landolt derivation.
-   Today that is a claim in a docstring. With a harness it is a test.
-4. **Upstream drift detection.** `find_catalogs`/`get_catalog_metadata` can
-   catch a superseded designation (`II/183` → `II/183A`), which `provenance.md`
-   names as a specific hazard.
-5. **Graceful degradation during an incident.** A worthwhile property in the
-   abstract — and the one decision 0001 argues hardest against, on the grounds
-   that a degraded path used during an incident is the worst place for a subtly
-   different answer.
-6. **Cold-start and pre-mirror development.** Working against a family before
-   its data is mirrored, without provisioning 128M rows.
-7. **Long-tail coverage.** VizieR has tens of thousands of catalogs. A generic
-   remote path makes a one-off comparison against an arbitrary designation
-   possible without adding a family.
-8. **Declarative extension.** Afterglow's `CUSTOM_VIZIER_CATALOGS` (§2.3) adds a
-   1.1-billion-row catalog in twelve lines of configuration, with no code and no
-   deploy. Nothing on Skycat's local path can ever be that cheap, because a local
-   family needs a parser, a table and a migration. This is the one capability
-   remote access offers that local-first structurally cannot match.
+### 6.1 Why the ordering matters
 
-## 7. Drawbacks
+Three reasons, in increasing order of force.
 
-1. **It contradicts the package's stated identity** — "build and query versioned
-   *local* PostgreSQL/PostGIS databases". The local-first architecture exists
-   *because* astroquery could not go local.
-2. **Two answer paths, one API** — the divergence problem decision 0001
-   identifies for SQLite, with network flakiness added.
-3. **The data does not match where it matters most** (§5.2). APASS: zero overlap.
-4. **~4× the dependency count**, including numpy, astropy and a desktop keyring
-   library, in a container image (§5.1).
-5. **External availability becomes internal availability.** CDS uptime and rate
-   limiting become Skycat's uptime.
-6. **Reproducibility is diluted.** Provenance, checksums and release attribution
-   have no remote counterpart (§5.5).
-7. **`batch_crossmatch` has no remote analogue** — the one operation the pipeline
-   most needs at scale (§5.3).
-8. **Science-layer coupling.** Owning the filter-lookup transformation tables
-   means Skycat acquires opinions about FITS filter names and photometric
-   transformations, and inherits the known registry-drift and key/name-mismatch
-   bugs along with them (§2.2, §2.5).
-9. **Duplication.** The routing layer exists downstream (§2.6). Two
-   implementations of local-first is worse than either one.
-10. **Test suite becomes non-hermetic** (§5.8).
-11. **Namespace collision with the consumer's existing `SKYCAT_*` routing
-    variables** (§5.9).
+1. **A mirrored catalog is strictly better than a remote one** on every axis
+   Skycat cares about — reproducibility, release attribution, latency,
+   `batch_crossmatch`, availability, and the failure mode being "cannot connect"
+   rather than "returned nothing". Remote access is not a feature; it is what you
+   do when the good option is unaffordable.
+2. **Building remote support first biases the estimate.** Once
+   `RemoteCatalogReader.cone("panstarrs", …)` works, the pressure to size,
+   mirror and validate a PanSTARRS release drops to zero, and the catalog is
+   remote forever by default rather than by decision.
+3. **The local work sharpens the remote work.** Every family mirrored is another
+   `comparable="yes"` row for the parity harness (§4.4) — Tycho-2 mirrored
+   locally means the remote Tycho-2 mapping gets an independent source of truth
+   it would not otherwise have. Local coverage does not compete with R1; it feeds
+   it.
+
+The counter-argument, stated fairly: local families are expensive
+(six touch points, a migration, a multi-hour ingest, disk) and remote catalogs
+are cheap (a dozen lines of declaration). That is true, and it is exactly why the
+cheap option must not be built first — it will absorb work that belongs to the
+expensive one.
+
+### 6.2 What a row costs
+
+Derived from the shipped schema, not measured. `ApassSource`
+(`skycat/models/apass.py`) is the wide case: 28 attributes, sixteen `Double`
+magnitude/error columns, a `JSONB extra`, and the generated
+`geography(Point,4326)`. The `add-family` guide's Tycho-2 example is the narrow
+case. Catalog tables do **not** carry `TimestampMixin`, so there is no
+per-row `created_at`/`updated_at`.
+
+| Component | Wide (APASS-shaped) | Narrow (Tycho-2-shaped) |
+|---|---|---|
+| Tuple header + null bitmap, MAXALIGNed | 32 | 32 |
+| `release_id` int4 + `id` int8, with padding | 16 | 16 |
+| `native_id` varchar | 10 | 14 |
+| Coordinates + errors, 4 × float8 | 32 | 32 |
+| Photometry, 2 × *n* bands × float8 | 128 (8 bands) | 32 (2 bands) |
+| Other typed columns (counts, proper motions, flags) | 8 | 24 |
+| `geom` geography(Point,4326), MAXALIGNed | 32 | 32 |
+| `extra` JSONB | ~150 | 0 (NULL) |
+| Item pointer + page slack (~8 %) | ~45 | ~15 |
+| **Heap subtotal** | **~455 B** | **~200 B** |
+| `PRIMARY KEY (release_id, id)` btree | ~28 | ~28 |
+| `native_id` btree | ~36 | ~40 |
+| GiST on `geom` | ~55 | ~55 |
+| **Index subtotal** | **~120 B** | **~125 B** |
+| **Total** | **≈ 575 B/row** | **≈ 325 B/row** |
+
+Planning constants: **600 B/row wide, 350 B/row narrow.** These are ±30 % until
+phase L0 calibrates them against the real DR10 partition with `skycat sizes` —
+`extra` size and `native_id` length are the two terms that move most, and both
+are per-catalog. Treat every GB figure below as an order-of-magnitude sort key,
+not a procurement number.
+
+### 6.3 Peak disk is not steady-state disk
+
+This falls straight out of the ingestion design and is the easiest planning
+mistake to make. Phase B1 builds a **detached standalone table** — a full second
+copy of the release, with its own PK and replicated indexes — while the old
+partition keeps serving reads, and only then does B2 swap them. Phase A has
+already streamed the rows through unlogged staging. So during a `--replace` of
+the largest release, the database holds the old partition, the new standalone
+table, and the staging copy simultaneously:
+
+> **Budget ≈ steady state + 2 × the largest single release.**
+
+For a store dominated by APASS DR10 that is roughly a 2.2× multiplier. This is a
+property worth preserving, not engineering away: it is what lets a `--replace` of
+the ACTIVE release stay ACTIVE throughout.
+
+### 6.4 What is stored today
+
+| Family | Release | Rows | Shape | Est. |
+|---|---|---|---|---|
+| `apass` | DR6 | 42.6 M | wide (u/z/Y NULL) | ~23 GB |
+| `apass` | **DR10** | 128.6 M | wide | **~77 GB** |
+| `vsx` | current | 10.3 M | mid | ~5 GB |
+| `stetson` | stetsonglobs | 4.9 M | mid | ~2 GB |
+| `landolt` | 1992 + 2009 | 1.1 k | narrow | <1 MB |
+| | | | **steady state** | **≈ 107 GB** |
+| | | | **peak during a DR10 replace** | **≈ 240 GB** |
+
+For reference, the development host this note was written on has 220 GB free.
+The production budget is open item 9.
+
+### 6.5 Candidates, sized
+
+Row counts as published by VizieR; verify in L0 (`Vizier.get_catalog_metadata()`
+is free and needs no download — the same call §4.11 uses for the designation
+lint).
+
+| Catalog | VizieR | Rows | Shape | Est. steady | Verdict |
+|---|---|---|---|---|---|
+| **Tycho-2** | `I/259/tyc2` | 2.5 M | narrow | **0.9 GB** | **A — mirror now** |
+| **Gaia DR3 synthetic photometry** | `I/360/syntphot` | ~220 M (~102 M standardised) | wide | **~130 GB** full, ~60 GB standardised | **B — mirror** |
+| **2MASS PSC** | `II/246` | 471 M | mid | **~190 GB** (J<16 cut: far less) | **B — mirror** |
+| SkyMapper DR2 | `II/358/smss` | 285 M | wide | ~170 GB | C — hemisphere-gated |
+| PanSTARRS DR2 | `II/349` | 1.92 B | wide | ~1.15 TB full | C — only magnitude-limited |
+| UCAC5 | `I/340` | 108 M | mid | ~45 GB | unranked — Gaia supersedes it |
+| ATLAS RefCat2 | `J/ApJ/867/105` | 991 M | mid | ~400 GB | C — evaluate against PanSTARRS |
+| USNO-B1.0 | `I/284` | 1.05 B | mid | ~420 GB | **D — remote only** |
+| NOMAD | `I/297` | 1.12 B | mid | ~450 GB | **D — remote only** |
+| Gaia DR3 main | `I/355/gaiadr3` | 1.81 B | wide | ~1.1 TB | **D — remote only** |
+| SDSS DR17 | — (SQL) | ~1.2 B | — | — | **D — not a VizieR mirror** |
+
+Storing everything is roughly 4 TB, which settles that question. The tiers:
+
+**Tier A — mirror unconditionally (≈ 1 GB).** **Tycho-2.** APASS saturates around
+V ≈ 10; Tycho-2 covers V < 11.5, so it fills the *bright*-star gap the current
+store simply does not answer. It costs 0.9 GB, it has two bands and no
+transformation expressions, and its local implementation is already written out
+end to end as the worked example in
+[guides/add-family.md](../guides/add-family.md) — six sections, real code, real
+`native_id` discussion. There is no defensible reason to serve this one over
+HTTP.
+
+**Tier B — mirror, highest value (≈ 60–200 GB each).**
+
+- **Gaia DR3 synthetic photometry (GSPC).** The strongest single addition in this
+  document, and it is absent from the entire legacy provider list (§2.2) purely
+  because it postdates it. Standardised synthetic UBVRI and ugriz magnitudes
+  derived from BP/RP spectra, all-sky and homogeneous — which is a *better*
+  answer than the photometric transformation tables in §2.2, not a cheaper one.
+  A pipeline calibrating in Johnson V against measured synthetic V does not need
+  Lupton or Jester coefficients at all.
+- **2MASS PSC.** The only all-sky JHK source, and what the legacy `(J-K)` cubics
+  consume. Mirroring it moves that input from a remote dependency to a local one.
+
+**Tier C — mirror magnitude-limited, hemisphere-driven (≈ 150–350 GB).**
+PanSTARRS DR2 for the north, SkyMapper for the south. Skynet operates telescopes
+in both hemispheres, so which of these is needed is a real question with a real
+answer that this note does not have (open item 10). Full PanSTARRS at ~1.15 TB is
+the clearest case in the document for remote-only if the cut cannot be justified.
+
+**Tier D — do not mirror. This is what `RemoteCatalogReader` is for.**
+USNO-B1.0 is 420 GB of photographic-plate photometry with scatter the pipeline
+should prefer to avoid. NOMAD is a *compilation* of Tycho-2, UCAC, USNO-B and
+2MASS — mirror the components, never the merge. Full Gaia DR3 and full PanSTARRS
+are order-1 TB each. SDSS is a SQL-region service with a survey footprint, not a
+bulk VizieR mirror.
+
+**Unranked: UCAC5** (45 GB). Gaia DR3 supersedes it for astrometry and GSPC for
+photometry. Skip unless a consumer names it.
+
+### 6.6 Magnitude cuts, and the honesty they require
+
+A magnitude-limited release is the single largest storage lever — it is what
+makes PanSTARRS conceivable at all — and it sits awkwardly against a stated
+principle: *releases are a deployment mechanism, not a science dimension.* A cut
+is unambiguously a science dimension. The tension is resolvable, but only
+explicitly:
+
+1. **The cut goes in the release name.** `dr2-r19`, never `dr2`. `ResolvedRelease`
+   already carries `release_name` into every resolution, so the cut then travels
+   with every answer at no additional cost.
+2. **The cut is a validated predicate, not a comment.** The family's validation
+   module asserts that no imported row violates it, so a release named `-r19`
+   that contains an r = 21 source fails validation rather than quietly
+   misrepresenting itself.
+3. **`skycat families` and `--json` surface it**, and the README's family table
+   states it.
+4. **A magnitude-limited family is never described as "the catalog."** A user
+   who cones at r = 20 and gets nothing must be able to discover why from the
+   data, not from a wiki page. This is the same requirement as `_source: "remote"`
+   in §4.3, for the same reason.
+
+Whether that needs its own decision record alongside 0002 is a judgement call;
+it changes what a release means, so probably yes.
+
+The cut factors themselves must be **counted, not assumed**. VizieR will return
+the matched row count for a `column_filter` without transferring any data, which
+makes "how many PanSTARRS objects have r < 19 and ≥ 2 detections" a free
+question. Answering it for every Tier B/C candidate is the substance of L0.
+
+### 6.7 What this changes about the remote plan
+
+- **Tycho-2 is no longer the first remote catalog.** It was chosen (§7.R3) as the
+  cleanest candidate precisely because it is small and simple — which is also why
+  it should be mirrored. After L1 it becomes a *parity* target instead.
+- **The remote catalog set becomes Tier D**, which is a better-defined and more
+  defensible surface than "the six the legacy layer happened to implement": these
+  are the catalogs local storage genuinely cannot justify, with the sizing to
+  prove it.
+- **R1's parity coverage grows** with each mirrored family, which is the
+  strongest technical reason the two tracks are complementary rather than
+  sequential-by-necessity.
+- **Nothing about §4's design changes.** The reader, the row shape, the failure
+  taxonomy and the config namespace are all unaffected by which catalogs end up
+  on which side of the line.
 
 ---
 
-## 8. Recommendation
+## 7. Action plan
 
-### Do now — Option D, the parity harness
+Two tracks. The local track (**L**) comes first and delivers coverage; the remote
+track (**R**) follows and delivers reach. Each phase is independently valuable
+and independently abandonable, and each names what it touches, what must be true
+before it is done, and the condition under which it should stop rather than
+continue.
 
-Scope, roughly 2–4 days:
+```
+L0 measure ─▶ L1 Tycho-2 ─▶ L2 Gaia GSPC ─▶ L3 2MASS ─▶ L4 deep optical (hemisphere-gated)
+   │                │                                          │
+   │  shares the dev-extra astroquery dep      each adds a parity pair for R1
+   ▼                ▼                                          ▼
+R0 decision ──┐
+              ├─▶ R2 reader + resolve() ─▶ R3 first cone (Tier D) ─┬─▶ R4 more Tier D
+R1 mapping + parity (dev) ──┘                                      └─▶ R5 lint + migration
+```
 
-1. `astroquery` in the `dev` extra only. No runtime dependency; no change to
-   `dependencies` in `pyproject.toml`.
-2. A new test module, marked `postgis` **and** a new `network` marker, skipped by
-   default like `postgis` is.
-3. A data table of comparable (family, release, VizieR designation) triples —
-   `landolt`/`1992`/`II/183A` and `stetson`/`stetsonglobs`/`J/MNRAS/485/3042/table4`
-   as `comparable`; `apass` and `vsx` recorded as **not comparable**, with the
-   reason inline. The exclusions are the most valuable rows in the table.
-4. For each comparable pair: a fixed field, a local cone, a remote cone,
-   assertions on matched-source count, position agreement (sub-milliarcsecond —
-   these are the same numbers, arrived at by different code), and magnitude
-   agreement.
-5. A committed-VOTable variant so the mapping logic is tested without a network.
+R0–R2 do not depend on the local track and can run in parallel with it if there
+is capacity; **R3 onward should not start until L1 has landed**, because the
+Tier D boundary is what makes the remote catalog set defensible.
 
-This gives back exactly what is currently unverified: proof that the local
-parsers reproduce the remote provider's arithmetic.
+### L0 — Measure and budget (1–2 days)
 
-### Do not do — Options A and C
+**Scope.** Turn §6's estimates into numbers. Run `skycat sizes` against the real
+store to calibrate the bytes-per-row constants (§6.2) — heap, index and `extra`
+sizes for the DR10 partition specifically. Establish the actual disk budget on
+the target host, and whether it is shared. Count magnitude-limited subsets for
+every Tier B/C candidate via VizieR metadata queries — free, no download, and it
+uses the same `dev`-extra astroquery that R1 needs, so the two phases share a
+dependency rather than each justifying one. Confirm hemisphere requirements with
+the pipeline owners (open item 10).
 
-C is solved: `wget` against `cdsarc.cds.unistra.fr/ftp/` is the documented,
-correct bulk path, and astroquery is not a bulk tool.
+**Files.** None in `skycat/`. A results table appended to this note and to
+[operations/performance.md](../operations/performance.md).
 
-A should not proceed without first writing a decision record that supersedes or
-carves out 0001, and that record has to answer §5.2. If someone wants remote
-fallback for the optical pipeline, the right place is the layer that already has
-it (§2.6).
+**Acceptance.** A measured B/row figure for APASS DR10; a stated disk budget with
+the §6.3 peak multiplier applied; a row count for every candidate at its proposed
+cut. §6.5's tiers stop being estimates and become decisions.
 
-### Reconsider later — Option B
+**Stop here if** the budget is under ~50 GB free after the peak multiplier. Then
+Tier A is the entire local plan, and the remote track moves up.
 
-Revisit when a consumer names a specific catalog it needs and cannot mirror.
-Then:
+### L1 — Tycho-2 (3–5 days)
 
-- A **separate** API surface (`RemoteCatalogReader`), not an overload of
-  `CatalogReader.cone()`.
-- Every row carries `_source: "remote"` and a designation string.
-- Optional runtime extra `skycat[remote]`, with a clear error — not a silent
-  fallback — when it is not installed.
-- Start with one family that has **no** local release, so §5.2 cannot bite.
-  Tycho-2 (`I/259`, 2.5M rows, two bands) is the cleanest first candidate: small
-  schema, no transformation expressions, no local counterpart.
+The cheapest real capability gain in this document: 0.9 GB buys the bright-star
+range (V < 11.5) that APASS cannot serve at all. The implementation is already
+written out as the worked example in
+[guides/add-family.md](../guides/add-family.md), which covers all six touch
+points against exactly this family — including the `native_id` decision
+(`TYC1-TYC2-TYC3`, e.g. `1-13-1`) and why Tycho-2 is a new family rather than a
+release.
+
+**Files.** `skycat/registry/catalog_defs.py`, `skycat/models/tycho2.py`,
+`skycat/ingestion/parsers/tycho2.py`, `skycat/migrations/versions/0007_tycho2.py`,
+`skycat/validation/tycho2.py`, `tests/` fixtures, README family table.
+
+**Acceptance.** `skycat import tycho2 …` end to end against a throwaway PostGIS;
+`uv run pytest tests -q --require-postgis` green; a documented cone at V ≈ 8 that
+returns Tycho-2 rows where `apass` returns none. Measured on-disk size compared
+against §6.2's narrow constant, and the constant corrected in this note.
+
+**Note.** This removes Tycho-2 as R3's candidate (§6.7).
+
+### L2 — Gaia DR3 synthetic photometry (1–2 weeks)
+
+The strongest single addition (§6.5, Tier B), and the first family large enough
+that ingestion performance is a real consideration rather than a formality — a
+good stress test of the detached-rebuild path at ~10⁸ rows, and the first
+validation of L0's storage model at scale.
+
+**The design decision this phase carries:** GSPC publishes synthetic magnitudes
+in many bands. Store the ones the pipeline resolves filters to as typed columns;
+put the rest in `extra`. Resist a column per band "for completeness" — at 10⁸
+rows every unused `Double` is ~800 MB (§6.2).
+
+**Acceptance.** Ingest and activate against a throwaway; `--require-postgis`
+green; timings recorded in `performance.md`; a cone returning synthetic Johnson V
+where the pipeline currently applies a Lupton transformation, with the two
+compared.
+
+### L3 — 2MASS PSC (1–2 weeks)
+
+The only all-sky JHK source, and the input the legacy `(J-K)` cubics consume
+(§2.2). Mirroring it converts that from a remote dependency into a local one.
+Apply a `J` cut if L0 shows the full 471 M rows do not fit the budget; if so,
+§6.6's naming and validation rules apply.
+
+### L4 — Deep optical, hemisphere-driven (2–4 weeks each)
+
+PanSTARRS DR2 magnitude-limited (north) and/or SkyMapper (south), gated on L0's
+hemisphere answer. Each is the largest ingestion Skycat will have attempted. Do
+them one at a time, re-measure after each, and apply §6.6 in full — a
+magnitude-limited PanSTARRS release that does not announce its cut is a
+misrepresentation, not a compromise.
+
+**Stop here if** L0's budget cannot absorb one of them with the §6.3 peak
+multiplier applied. That is not a failure; it is the measurement that moves the
+catalog into Tier D and hands it to the remote track with evidence.
+
+### R0 — Decide and record (0.5–1 day)
+
+**Scope.** Write `docs/decisions/0002-remote-catalogs-are-a-separate-reader.md`.
+It must state: that `CatalogReader` never reaches the network; that decision 0001
+is **not** superseded, with the §1.2 argument for why an adjacent reader is not a
+fallback; that remote rows carry no release; that routing stays downstream; that
+the six-touch-point rule for local families does not bind a remote catalog,
+because a remote catalog has no parser, model, migration or validation module
+(§3). Close open items 1, 2 and 6 (§9) or record them as still open.
+
+**Files.** `docs/decisions/0002-*.md`, `docs/decisions/README.md`,
+`docs/reference/architecture.md` (one paragraph naming the second reader).
+
+**Acceptance.** Decision record merged. A reader who disagrees with the design
+has one file to argue with.
+
+**Stop here if** the decision cannot be written without superseding 0001 — that
+means the design is a fallback wearing a different name, and it should go back to
+the drawing board rather than into code.
+
+### R1 — Mapping layer and parity harness, dev-only (3–5 days)
+
+The highest-value phase and the one that ships nothing. It builds the part of the
+system most likely to be silently wrong (§2.9.2) and proves it against a source
+of truth before any of it is on a runtime path.
+
+**Scope.**
+- `astroquery >= 0.4.8` in the **`dev` extra only**. No change to `dependencies`.
+- `skycat/remote/defs.py` and `skycat/remote/mapping.py` — the typed def (§4.4)
+  and the row mapper (§4.3): hours→degrees, sexagesimal with the `-00 30 00` sign
+  case, `null_above` sentinels, `'`→`_` column renaming, the haversine.
+- Defs for the four families with a local counterpart: `apass` (DR9,
+  `comparable="no"`), `vsx` (`"approximate"`), `landolt` (`"yes"`), `stetson`
+  (`"yes"`).
+- A `network` pytest marker plus `--require-network` / `SKYCAT_REQUIRE_NETWORK=1`,
+  mirroring `--require-postgis` exactly.
+- `tests/test_remote_mapping.py` — offline, against committed VOTable/TAP
+  fixtures. Covers every def's id column, every sentinel, the sexagesimal sign
+  case, and the haversine against known separations.
+- `tests/test_remote_parity.py` — marked `postgis` **and** `network`. For each
+  `comparable="yes"` pair: a fixed field, a local `CatalogReader.cone()`, the
+  equivalent remote cone, assertions on matched-source count, position agreement
+  (sub-milliarcsecond — these are the same numbers reached by different code) and
+  magnitude agreement.
+- A `separation_deg` cross-check against `ST_Distance(…, false)` over a grid
+  including both poles and the RA 0/360 seam.
+
+**Acceptance.**
+- `landolt`/`1992`/`II/183A` and `stetson`/`stetsonglobs` parity tests pass live.
+- Every mapping assertion also passes offline against fixtures with no network.
+- `apass` and `vsx` appear in the def table with `comparable` set and a reason.
+- Default `uv sync` still installs five runtime dependencies.
+
+**Stop here if** the parity tests fail on position. That is a bug in
+`skycat/ingestion/parsers/{landolt,stetson}.py` — a claim in a docstring turning
+out false — and it outranks every other item in this document.
+
+### R2 — `RemoteCatalogReader` skeleton and `resolve()` (3–5 days)
+
+Smallest honest runtime surface: the one operation with no local analogue, no
+release semantics, no schema impedance and no photometric mapping (§4.5).
+
+**Scope.**
+- Runtime extra `skycat[remote]`; `skycat/remote/{__init__,reader,simbad,errors}.py`.
+- `RemoteCatalogReader.__init__`, `from_env`, `close`, context manager,
+  `resolve()`.
+- The §4.7 exception tree; `_FriendlyGroup` mapping (`RemoteCatalogError` → 1,
+  missing extra → `CatalogConfigError` → 2).
+- Structured logging under `skycat.remote`, per the `skycat.ingestion` convention.
+- Guard tests: `skycat/client.py` does not import `skycat.remote`;
+  `import skycat` leaves `astroquery` out of `sys.modules`; a clear, actionable
+  error when the extra is absent.
+- `SKYCAT_REMOTE_*` variables (§4.12), each with a test that fails if it stops
+  being read.
+- Docs: `docs/reference/remote.md`, README configuration table, api-stability
+  entries for the new exception names — **same commit**, because
+  `tests/test_docs.py` enforces it.
+
+**Acceptance.** `resolve("M31")` returns bounded, ICRS-degree results; a SIMBAD
+outage raises `RemoteServiceError` on that call and the *next* call retries
+(§2.6.1); `limit` bounds the list on every path; nothing about `CatalogReader`
+changed.
+
+### R3 — First remote catalog: USNO-B1.0 (5–8 days)
+
+**Scope.** `cone()` for exactly one Tier D catalog — one with **no local
+counterpart and no prospect of one**, so §5.2 cannot bite and the phase is not
+building something L1–L4 will later obsolete. **USNO-B1.0** (`I/284`) is the
+pick: 1.05 billion rows at ~420 GB puts it out of mirroring range permanently
+(§6.5), its schema is plain (`USNO-B1.0` designation as `native_id`, four plate
+magnitudes plus B1/B2/R1/R2, no transformation expressions), and remote is
+therefore its only path — which is precisely the demand `RemoteCatalogReader`
+exists to serve. UCAC5 (`I/340`) is the alternative if a narrower schema is
+wanted first, but note it is only 45 GB and could be argued back into the local
+track.
+
+Plus `skycat/remote/vizier.py` (transport, timeouts, bounded retries),
+`catalogs()`, `describe()`, `mag_min`/`mag_max` rendered by the mapping layer
+(§4.6), and a CLI `skycat remote cone` behind the extra.
+
+Tycho-2 was this phase's candidate in the previous revision. L1 mirrors it
+instead (§6.5, §6.7); it becomes a parity target for R1 rather than a remote
+catalog.
+
+Measure TAP versus the POST path here (open item 5) and record the result; it is
+the only phase where the answer is cheap to get.
+
+**Acceptance.** Every row carries `_source`/`_service`/`_designation`/`_retrieved_at`
+and no release key; `mag_min=12, mag_max=15` demonstrably filters (the §2.7
+defect-2 regression test); a CDS timeout raises `RemoteTimeoutError` within
+`service_timeout_s` including retries; `skycat remote cone` exits 1 on a service
+failure and 2 with the extra uninstalled; offline fixture tests cover the whole
+path.
+
+**Stop here if** no consumer has asked by the time R2 lands. R0–R2 are
+valuable standalone, and after L1–L4 the remaining remote candidates are
+exactly Tier D — real, but nobody has requested them, and
+`skynet-db` already has working remote providers for all six candidates.
+
+### R4 — Remaining Tier D catalogs (1–2 days each)
+
+NOMAD (`I/297`), full Gaia DR3 (`I/355/gaiadr3`), full PanSTARRS DR2 (`II/349`),
+and whichever Tier C candidates L0/L4 pushed into Tier D on budget grounds —
+added one def at a time, each with fixture tests, in priority order set by
+whoever asked. **Anything L1–L4 mirrored does not get a remote def**, except as a
+parity target; two paths to the same catalog is §1.2's problem re-entering through
+the back door.
+
+Photometric transformations stay out (§1.3.4). A general remote `QualityFilter`
+with `RemoteConstraintError` belongs here if it is needed. `lookup()` by native
+id, if it is wanted, lands here too.
+
+**Acceptance, per catalog.** A def, a fixture, an id-column test, a sentinel test,
+and a row in the docs table. No catalog ships without a fixture.
+
+### R5 — Designation lint and consumer migration (2–4 days)
+
+**Scope.** A scheduled CI job using `describe()` to verify every
+`reference_url`/designation in both `catalog_defs.py` and `remote/defs.py` still
+resolves and has not been superseded (§4.11). Then, separately, retire
+`skynet`'s hand-rolled integrations: `/v1/catalog-objects/vizier/apass` (§2.7)
+onto `RemoteCatalogReader.cone()`, and `target_search.py`'s SIMBAD block (§2.6)
+onto `resolve()`. Both are `skynet` PRs, not Skycat ones, and both are the
+payoff: eight defects and seven defects respectively, deleted rather than fixed
+in place.
+
+**Acceptance.** The lint job runs weekly and fails loudly on a superseded
+designation. The public-api endpoint returns degrees in a field named degrees,
+bounded and timed out, with its magnitude filters actually filtering.
+
+### Explicitly not phases
+
+- Remote fallback in `CatalogReader` — §1.3.1. Not behind a flag either.
+- A unified `Reader` facade — §1.3.2.
+- `skycat fetch` — §1.3.3.
+- Photometric transformation tables — §1.3.4.
+- Remote `batch_crossmatch` — §4.10.
+- **A remote def for any catalog the local track mirrored.** Tier A/B/C catalogs
+  get a remote def only as an R1 parity target, never as a servable `cone()`
+  catalog. Offering both paths to one catalog is the ambiguity §1.2 exists to
+  prevent, arriving from the other direction.
 
 ---
 
-## 9. What would change the verdict
+## 8. Testing strategy
 
-Written so this can be judged against evidence rather than re-argued.
+Three tiers, because the failure mode this whole document is about is *returning
+nothing without raising* (§2.9.2), and only the third tier catches it.
 
-**Would justify reopening A:**
+1. **Offline fixture tests** — committed VOTable/TAP responses, no marker, run on
+   every commit in the unit matrix. Cover the entire mapping layer: every def's
+   id column, every sentinel, unit conversion, sexagesimal signs, the `'`→`_`
+   rename, the haversine, and the error mapping for a malformed response. These
+   must be able to fail — capture a real response, then hand-edit variants
+   (missing column, sentinel value, null id, empty table) rather than only
+   recording the happy path.
+2. **Live service tests** — marked `network`, skipped by default, escalated by
+   `--require-network` / `SKYCAT_REQUIRE_NETWORK=1`. These catch upstream drift:
+   a renamed column, a superseded designation, a changed default server. Run
+   nightly, not per-commit.
+3. **Parity tests** — marked `postgis` **and** `network`. The only tier that can
+   detect a mapping that is self-consistent and wrong, because it has an
+   independent source of truth for the same sky. Restricted by construction to
+   `comparable="yes"` defs; the harness reads `comparable` from the def table
+   (§4.4) so an excluded pair is visibly excluded rather than quietly absent.
 
-- VizieR publishing APASS DR10, closing §5.2's gap. (Track the AAVSO/CDS status;
-  it has been "pending" for some time.)
+Two standing rules:
+
+- **A def without a fixture does not ship.** §2.3's NOMAD example is what a
+  declarative table looks like with no test behind it.
+- **An empty result is a suspicious result.** Every fixture test asserts a
+  non-zero row count where one is expected; a filter test asserts the filter
+  changed the count in the direction claimed. §2.7 defect 2 would have been
+  caught by one such assertion.
+
+`tests/test_docs.py` asserts that every CLI flag and `CatalogReader` kwarg shown
+in the stable docs exists. Extend it to `RemoteCatalogReader` when R2 lands,
+so the remote surface is held to the same standard.
+
+---
+
+## 9. Open items to verify before implementing
+
+1. **Branch state of the downstream routing layer.** `catalogs/local/` in
+   `skynet` has only stale bytecode on `pipeline/analysis-descriptive-split`.
+   Confirm whether `feat/skycat` / `add-landholt-and-stetson` merged, and whether
+   `SKYCAT_LOCAL_FAMILIES` in the Compose worker is still pinned to `APASS,VSX`
+   (excluding Landolt and Stetson). Blocks R0's claim that routing is
+   already downstream.
+2. ~~**APASS DR10 on VizieR.**~~ **Verified 2026-08-07: still not queryable.**
+   VizieR serves DR9 as `II/336/apass9`; AAVSO states DR10 "cannot be
+   automatically queried" and distributes it directly. §5.2 stands. Re-check
+   before R4; the AAVSO page tracking the VizieR schedule is the source.
+3. **Landolt 2009 designation.** `J/AJ/137/4186` is inferred from
+   `catalog_defs.py`'s description; the legacy plugin only knows `II/183A`.
+   Confirm before adding a second `comparable="yes"` pair in R1.
+4. **astroquery version floor and ceiling.** `>= 0.4.8` is required for the TAP
+   SIMBAD columns (§2.6.2). `skynet` pins `==0.4.10` in three requirements files
+   and `skylib` declares `~= 0.4.9`; current stable is 0.4.11. Confirm the extra's
+   constraint cannot conflict where both are installed.
+5. **VizieR TAP batch semantics.** Whether `TAPVizieR` via `pyvo` offers upload
+   joins good enough to revisit §4.10. Measure in R3; do not assume.
+6. **Which VizieR server production actually reaches.** The skynet fork's
+   `config.py` says `vizier.cds.unistra.fr` but nothing reads it and
+   `vizier_server = None` (§2.4); Afterglow's default is
+   `vizier.cfa.harvard.edu`. Mirrors can hold different snapshots, so this must
+   be settled before any parity test compares against "the" VizieR.
+7. **Whether `CUSTOM_VIZIER_CATALOGS` is populated in any deployment.** Afterglow
+   ships it defaulting to `[]` and the skynet forks dropped it. If a deployment
+   populates it, there are catalog definitions in operator config that exist in
+   no repository — and per §2.3, any written in the documented `mags` shape are
+   silently returning nothing.
+8. **Does anything besides the two public-api routes call SIMBAD?** §2.6 found one
+   integration by grep. Confirm before R5 plans its retirement.
+9. **The actual disk budget.** §6's tiers are sorted against a number this note
+   does not have: how much storage the production catalog host has, whether it is
+   shared, and whether it can absorb the §6.3 peak multiplier during a
+   `--replace`. The development host has 220 GB free; production is unknown.
+   **Blocks every local phase past L1.**
+10. **Which hemisphere.** Skynet operates telescopes north and south, which makes
+    PanSTARRS-versus-SkyMapper (§6.5, Tier C) a real question with a real answer.
+    Ask the pipeline owners; the answer may be "both", which doubles L4.
+11. **Measured bytes per row.** §6.2 is derived from the schema, not measured.
+    `skycat sizes` against the live DR10 partition settles it, and every GB figure
+    in §6.5 scales with the result. L0's first task.
+12. **Gaia DR3 GSPC row counts and band set.** ~220 M sources with ~102 M
+    standardised is the published shape; confirm both, and confirm which
+    synthetic bands the pipeline would actually resolve filters to before L2
+    designs the typed model (§7.L2).
+13. **Whether magnitude-limited releases need their own decision record.** §6.6
+    argues they change what a release means. Settle it with R0's record or
+    separately, but before L4 ships one.
+
+---
+
+## 10. What would change the plan
+
+**Would justify accelerating R3–R4 past the local track:**
+
+- **L0 returning a small budget.** If production cannot absorb Tier B, the local
+  track ends at L1 and everything above it is remote by measurement rather than
+  by default. This is the most likely trigger and the reason L0 is first.
+- A consumer naming a Tier D catalog it needs now — full PanSTARRS, full Gaia
+  DR3, NOMAD, or a magnitude-unlimited deep survey. At ~1 TB each these are the
+  cases where a local mirror is a serious infrastructure commitment and, for
+  occasional use, unjustifiable.
+- A second consumer of Skycat with no `skynet-db` provider layer of its own.
+- Long-tail need: VizieR has tens of thousands of catalogs, and a generic remote
+  path makes a one-off comparison against an arbitrary designation possible
+  without adding a family. Nothing on the local path can ever be that cheap,
+  because a local family needs a parser, a table and a migration.
+
+**Would justify deferring the remote track further:**
+
+- L0 returning a *large* budget. If Tier B and Tier C all fit with the peak
+  multiplier, the remote surface shrinks to NOMAD, full Gaia and SDSS — at which
+  point R3–R5 serve three catalogs of marginal value and R0–R2 (decision record,
+  parity harness, SIMBAD) are the whole worthwhile remote scope.
+- L1 taking materially longer than 3–5 days. That would mean the six-touch-point
+  path is more expensive than
+  [guides/add-family.md](../guides/add-family.md) implies, which is a finding
+  about the local track worth fixing before adding a second one.
+
+**Would justify reopening the fallback question** (and would require superseding
+decision 0001 in a written record, not a PR):
+
+- VizieR publishing APASS DR10, closing §5.2's gap.
 - A documented incident where PostGIS unavailability caused a pipeline outage
-  that a remote path would have prevented — weighed against decision 0001's
-  argument that the wrong answer is worse than the clear failure.
+  that a remote path would have prevented — weighed against 0001's argument that
+  the wrong answer is worse than the clear failure.
 - The downstream `LocalFirstCatalog` layer being retired, leaving no home for
   routing.
 
-**Would justify accelerating B:**
-
-- A consumer needing PanSTARRS or 2MASS photometry with no plan to mirror it.
-- A second consumer of Skycat that has no `skynet-db` provider layer of its own.
-
-**Would not justify either:**
+**Would not justify anything:**
 
 - "It would be nice to have everything in one place."
-- Making local development easier without a database — that is decision 0001's
+- Making local development easier without a database — decision 0001's
   explicitly-rejected reasoning, and it applies verbatim.
-
----
-
-## 10. Open items to verify before implementing
-
-1. **Branch state of the downstream routing layer.** `catalogs/local/` in
-   `skynet` has only stale bytecode on the current branch. Confirm whether
-   `feat/skycat` / `add-landholt-and-stetson` merged, and whether
-   `SKYCAT_LOCAL_FAMILIES` in the Compose worker is still pinned to `APASS,VSX`
-   (excluding Landolt and Stetson) — the vault lists that as an open confirm
-   item.
-2. **APASS DR10 on VizieR.** Re-check; it is the single fact that most changes
-   this analysis.
-3. **Landolt 2009 designation.** `J/AJ/137/4186` is assumed here from
-   `catalog_defs.py`'s description; the legacy plugin only knows `II/183A`.
-   Confirm before adding a second comparable pair.
-4. **astroquery version constraint.** `skynet` pins `0.4.10` in three
-   requirements files; current stable is `0.4.11`. Whatever Skycat declares must
-   not conflict where both are installed.
-5. **VizieR TAP.** The `TAPVizieR` endpoint (via `pyvo`, already an astroquery
-   dependency) may offer better batch semantics than the `viz-bin/votable` POST
-   path the legacy plugins use — relevant only if B proceeds, but it would
-   change the §5.3 crossmatch verdict if true.
-6. **Which VizieR server production actually hits.** The skynet fork's
-   `config.py` says `vizier.cds.unistra.fr`, but nothing reads it and
-   `vizier_server = None` (§2.4), so the effective server is astroquery's
-   default. Afterglow's default is `vizier.cfa.harvard.edu`. Confirm before any
-   parity test compares against "the" VizieR — mirrors can hold different
-   snapshots.
-7. **Whether `CUSTOM_VIZIER_CATALOGS` is in use anywhere.** Afterglow ships it
-   defaulting to `[]`, and the skynet forks dropped it. If a deployment
-   populates it, there are catalog definitions in operator config that exist in
-   no repository — and per §2.3, any of them written in the documented `mags`
-   shape are silently returning nothing.
 
 ---
 
@@ -893,33 +1746,44 @@ Written so this can be judged against evidence rather than re-argued.
 
 **Skycat** — `skycat/client.py`, `skycat/query/cone.py`,
 `skycat/query/crossmatch.py`, `skycat/registry/catalog_defs.py`,
-`skycat/models/{apass,landolt,stetson,vsx}.py`, `pyproject.toml`;
-[decisions/0001](../decisions/0001-postgresql-postgis-only.md),
+`skycat/models/{apass,landolt,stetson,vsx}.py`, `skycat/cli/main.py`,
+`pyproject.toml`; [decisions/0001](../decisions/0001-postgresql-postgis-only.md),
 [reference/architecture.md](../reference/architecture.md),
 [reference/api-stability.md](../reference/api-stability.md),
-[guides/provenance.md](../guides/provenance.md).
+[guides/provenance.md](../guides/provenance.md),
+[guides/add-family.md](../guides/add-family.md),
+[operations/runbook.md](../operations/runbook.md).
 
-**Skynet** (`pipeline/analysis-descriptive-split`) —
+**Skynet** (`pipeline/analysis-descriptive-split` @ `0040c28ab`) —
 `packages/py/skynet-db/skynet_db/runners/observation_asset_processing/optical_data_processing/catalogs/`
 (`vizier_catalogs.py`, `catalog.py`, `config.py`, `__init__.py`, and the ten
-provider modules), `runners/common/catalog_plugins/` (the vestigial fork),
+provider modules); `runners/common/catalog_plugins/` (the vestigial fork);
 `apps/afterglow/docs/legacy/resources/catalog_plugins/` (the vendored Afterglow
-snapshot), `runners/utils.py`, `requirements.txt`.
+snapshot); **`apps/public-api/public_api/services/target_search.py`** (SIMBAD);
+**`apps/public-api/public_api/routers/catalog_objects.py`** and
+`apps/public-api/public_api/schemas/catalog_objects.py` (the direct VizieR APASS
+endpoint); `runners/utils.py`; `requirements.txt`,
+`apps/public-api/requirements.txt`,
+`packages/py/skynet-db/requirements.txt` (all pinning `astroquery==0.4.10`);
+`packages/py/skylib/pyproject.toml` (`astroquery ~= 0.4.9`).
 
 **Afterglow Core** (`master` @ `92aaf61`) —
 `afterglow_core/resources/catalog_plugins/vizier_catalogs.py` (the
-`CUSTOM_VIZIER_CATALOGS` class factory), `afterglow_core/models/catalogs.py`
-(the `Catalog`/`CatalogSource` marshmallow base and the `CATALOG_OPTIONS`
-merge), `afterglow_core/default_cfg.py` lines 110–145 (the catalog config
-block). `resources/data_provider_plugins/imaging_survey_provider.py` uses
-`astroquery.skyview` for image cutouts — a separate concern, out of scope here.
+`CUSTOM_VIZIER_CATALOGS` class factory), `afterglow_core/models/catalogs.py` (the
+`Catalog`/`CatalogSource` marshmallow base and the `CATALOG_OPTIONS` merge),
+`afterglow_core/default_cfg.py` lines 110–145 (the catalog config block).
+`resources/data_provider_plugins/imaging_survey_provider.py` uses
+`astroquery.skyview` for image cutouts and mentions SIMBAD only as SkyView's own
+name resolver — a separate concern, out of scope here.
 
 **Vault** — `wiki/resources/entities/astroquery-VizieR.md`,
-`wiki/resources/concepts/{Local-First Catalog Architecture,Catalog Selection and Provider Registry}.md`,
+`wiki/resources/concepts/{Local-First Catalog Architecture,Catalog Selection and Provider Registry,Catalog Release Provenance}.md`,
 `wiki/resources/incoming/Astroquery VizieR Local Catalog Investigation.md`.
 
 **Upstream** — [astroquery VizieR docs](https://astroquery.readthedocs.io/en/latest/vizier/vizier.html),
-[astroquery on PyPI](https://pypi.org/project/astroquery/),
+[astroquery SIMBAD docs](https://astroquery.readthedocs.io/en/stable/simbad/simbad.html),
+[astroquery SIMBAD module evolutions (the 0.4.8 TAP rewrite)](https://astroquery.readthedocs.io/en/stable/simbad/simbad_evolution.html),
+[astroquery on PyPI](https://pypi.org/project/astroquery/) (0.4.11 current),
 [VizieR II/336 (APASS DR9)](https://cdsarc.cds.unistra.fr/viz-bin/cat/II/336),
 [AAVSO APASS DR10 download](https://www.aavso.org/download-apass-data),
 [AAVSO: APASS DR10 VizieR schedule](https://www.aavso.org/apass-dr10-vizier-schedule).
