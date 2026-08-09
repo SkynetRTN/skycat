@@ -58,6 +58,37 @@ class QualityFilter:
     value: float | int | str | bool
 
 
+#: Python types a bound value may take, per the column's own Python type.
+#: Widened exactly where PostgreSQL's comparison is: an ``int`` is a fine bound
+#: for a ``double precision`` column. ``bool`` is kept out of the numeric sets on
+#: purpose — it is an ``int`` subclass in Python and not a number in SQL.
+_COMPATIBLE_VALUE_TYPES: dict[type, tuple[type, ...]] = {
+    int: (int,),
+    float: (int, float, Decimal),
+    Decimal: (int, float, Decimal),
+    str: (str,),
+    bool: (bool,),
+}
+
+
+def _python_type(col) -> type | None:
+    """The column's Python type, or ``None`` when it has no single one.
+
+    ``JSONB`` and the geography types are the ``None`` cases here.
+    """
+    try:
+        return col.type.python_type
+    except NotImplementedError:
+        return None
+
+
+def _value_is_comparable(py_type: type, value: object) -> bool:
+    allowed = _COMPATIBLE_VALUE_TYPES[py_type]
+    if isinstance(value, bool) and bool not in allowed:
+        return False
+    return isinstance(value, allowed)
+
+
 def _quality_clause(table, qf: QualityFilter):
     """Validate one filter against ``table`` and return its SQLAlchemy clause."""
     if qf.column == "geom":
@@ -72,7 +103,46 @@ def _quality_clause(table, qf: QualityFilter):
             f"Unsupported quality-filter operator {qf.op!r}; allowed: "
             + ", ".join(sorted(_QUALITY_OPERATORS))
         ) from None
+    # The value is bound, never interpolated — but binding a string against a
+    # double precision column still fails, in the driver, as a ProgrammingError.
+    # The docstring above invites untrusted input, so the mismatch is the
+    # caller's error and gets the caller's error type.
+    py_type = _python_type(col)
+    if py_type is None or py_type not in _COMPATIBLE_VALUE_TYPES:
+        raise CatalogQueryError(
+            f"Quality filters are not supported on column {qf.column!r} "
+            f"({col.type}); only numeric, text and boolean columns compare"
+        )
+    if not _value_is_comparable(py_type, qf.value):
+        raise CatalogQueryError(
+            f"Quality-filter value {qf.value!r} is a {type(qf.value).__name__}, but "
+            f"column {qf.column!r} is {col.type}"
+        )
     return apply_op(col, qf.value)
+
+
+def _validate_centre(ra_deg: float, dec_deg: float) -> None:
+    """Range-check the search centre, in this layer's error type.
+
+    ``skycat.spatial`` keeps its bare ``ValueError``: it is dependency-free and
+    shared with the parsers, where a coordinate out of range is a data defect
+    rather than a query. ``api-stability.md`` promises callers of the query API
+    ``CatalogQueryError``, so the translation happens at this boundary.
+    """
+    try:
+        validate_radec(ra_deg, dec_deg)
+    except ValueError as exc:
+        raise CatalogQueryError(str(exc)) from exc
+
+
+def _validate_limit(limit: int) -> None:
+    """``LIMIT 0`` is a legitimate query; a negative one is a caller's mistake.
+
+    PostgreSQL answers it with ``DataError: LIMIT must not be negative`` after a
+    round trip. Refusing it here costs nothing and keeps the promised type.
+    """
+    if limit < 0:
+        raise CatalogQueryError(f"limit must be >= 0, got {limit}")
 
 
 def _order_by_clause(table, order_by: str):
@@ -88,11 +158,7 @@ def _order_by_clause(table, order_by: str):
     col = table.c.get(order_by)
     if col is None:
         raise CatalogQueryError(f"Unknown order-by column {order_by!r}")
-    try:
-        py_type = col.type.python_type
-    except NotImplementedError:  # pragma: no cover - non-scalar column types
-        py_type = None
-    if py_type not in (int, float, Decimal):
+    if _python_type(col) not in (int, float, Decimal):
         raise CatalogQueryError(
             f"Order-by column {order_by!r} is not numeric; ordering is only "
             "supported on numeric columns (e.g. johnson_v_mag)"
@@ -188,7 +254,8 @@ def cone_search(
     the release (see :class:`skycat.client.CatalogReader`, which caches it); it
     takes precedence over ``release``.
     """
-    validate_radec(ra_deg, dec_deg)
+    _validate_centre(ra_deg, dec_deg)
+    _validate_limit(limit)
     own_engine = engine is None
     if engine is None:
         cfg = settings.config_for(role)
@@ -245,6 +312,7 @@ def lookup_native_id(
     ``resolved`` to skip the registry lookup; it takes precedence over
     ``release``.
     """
+    _validate_limit(limit)
     own_engine = engine is None
     if engine is None:
         cfg = settings.config_for(role)
@@ -281,7 +349,8 @@ def cone_search_plan(
     rows), so explaining a nearest-first query would misrepresent what a
     brightest-first one actually does.
     """
-    validate_radec(ra_deg, dec_deg)
+    _validate_centre(ra_deg, dec_deg)
+    _validate_limit(limit)
     cfg = settings.config_for(CatalogRole.READER)
     cfg.assert_not_reserved_database()
     engine = create_catalog_engine(cfg, pool_size=1, max_overflow=1)

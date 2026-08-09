@@ -179,7 +179,7 @@ and source data provenance is covered in
 ## Configuration
 
 Skycat uses `SKYCAT_DB_*` for database settings and `SKYCAT_*` for catalog
-runtime paths.
+runtime paths and diagnostics.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -200,6 +200,7 @@ runtime paths.
 | `SKYCAT_DB_READER_USER` / `SKYCAT_DB_READER_PASSWORD` | unset | Read-only role managed by `init`. |
 | `SKYCAT_DATA_ROOT` | `/srv/agents/catalogs` | Read-only catalog source root. |
 | `SKYCAT_WORK_ROOT` | `/tmp/skycat-work` | Writable work area for manifests, rejects, and checkpoints. |
+| `SKYCAT_DEBUG` | unset | Diagnosis only: suppress the CLI's friendly error messages entirely, so the original exception and its traceback reach the interpreter. Leave it unset in Jobs and services — with it set, an error is a stack trace instead of a message. |
 
 ## Testing
 

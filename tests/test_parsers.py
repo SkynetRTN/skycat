@@ -50,6 +50,32 @@ def test_apass_dr10_parsing_and_sentinel():
     assert first["extra"]["nobs_per_band"]["B"] == 4
 
 
+def test_apass_dr10_counts_garbage_instead_of_dropping_it(tmp_path):
+    """"Nothing is silently dropped" has to hold for DR10's header skip too.
+
+    The skip used to be "first token does not start with a digit", which is also
+    true of a truncated write, a stray header concatenated mid-stream, or a
+    filesystem-mangled line — none of which appeared in `parsed`, in `malformed`,
+    or in the rejects table. Only the header is a header.
+    """
+    src = tmp_path / "apass_dr10_fragment.txt"
+    good = (DATA / "apass_dr10_sample.txt").read_text().splitlines()
+    header, first_row = good[0], good[1]
+    src.write_text(
+        f"{header}\n{first_row}\n"
+        "*** transfer aborted ***\n"           # a truncated/corrupt line
+        f"{header}\n"                          # a header again, mid-stream
+        f"{first_row}\n"
+    )
+    parser = get_parser("apass_dr10_txt")
+    stats = ParseStats()
+    rows = list(parser.iter_rows([src], stats))
+
+    assert len(rows) == stats.parsed == 2      # both real rows, neither header
+    assert stats.malformed == 1
+    assert stats.malformed_examples and "transfer aborted" in stats.malformed_examples[0]
+
+
 def test_vsx_fixed_width_parsing():
     rows, stats = _rows("vsx_dat", "vsx_sample.dat")
     assert stats.parsed == len(rows) >= 6

@@ -24,11 +24,30 @@ _INI = _PROJECT_DIR / "alembic.ini"
 _SCRIPT_LOCATION = _PACKAGE_DIR / "migrations"
 
 
+def _ini_literal(value: str) -> str:
+    """Escape ``value`` so configparser stores it verbatim.
+
+    ``Config.set_main_option`` writes through ``configparser``, whose
+    ``BasicInterpolation`` rejects any ``%`` that is not ``%%`` or ``%(name)s``.
+    ``CatalogDatabaseConfig.url()`` percent-encodes the password, so ``@``, ``!``,
+    ``#``, ``:``, ``$``, ``&``, ``+``, a space, or a literal ``%`` — most of what
+    a password generator emits — used to raise ``ValueError`` from configparser
+    instead of running a migration, taking out ``init``, ``migrate``,
+    ``migrate-status``, the ``skycat-migrate`` Job, and the
+    ``migrations_current`` health check with it.
+
+    Doubling the escapes is what Alembic's own ini template prescribes.
+    ``get_main_option`` — which ``migrations/env.py`` calls — undoubles them, so
+    what Alembic dials is byte-for-byte what was passed in.
+    """
+    return value.replace("%", "%%")
+
+
 def make_alembic_config(config: CatalogDatabaseConfig) -> Config:
     config.assert_not_reserved_database()
     cfg = Config(str(_INI)) if _INI.exists() else Config()
-    cfg.set_main_option("script_location", str(_SCRIPT_LOCATION))
-    cfg.set_main_option("sqlalchemy.url", config.url())
+    cfg.set_main_option("script_location", _ini_literal(str(_SCRIPT_LOCATION)))
+    cfg.set_main_option("sqlalchemy.url", _ini_literal(config.url()))
     return cfg
 
 
