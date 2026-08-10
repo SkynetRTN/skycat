@@ -14,9 +14,11 @@ If you want current behaviour, everything here is the wrong file. Start at
 A note lives in one of exactly two places, and the frontmatter `status` says
 which:
 
-- **`working/`** — `status: open`. There is work in it that has not been done.
-- **`working/archive/`** — `status: archived`. Every item has landed and nothing
-  in it is outstanding. It is kept as the record of what was decided and why.
+- **`working/`** — `status: open` for active work, or `status: closed` for a
+  completed review that is still being kept with the active working notes.
+- **`working/archive/`** — `status: archived`. Every item has landed or been
+  explicitly dropped and nothing in it is outstanding. It is kept as the record
+  of what was decided and why.
 
 Moving a note to `archive/` means asserting the second thing. Check it against
 the repository before you move one, and if a note is archived with a caveat
@@ -27,7 +29,7 @@ archivable until it is closed or explicitly dropped.
 
 | Note | Status | Why |
 |---|---|---|
-| [code-review-2026-08.md](code-review-2026-08.md) | **open** | Engineering review of the runner, release state machine, query path, guards, roles, migrations, parsers, and CI. Eighteen findings — five high, seven medium, six low — of which twelve were reproduced against a throwaway PostGIS database. **Phases 1–3 of the six-phase action plan landed 2026-08-07** (F1, F5, F6, F9, F10, F13, F14, F15, F17, F18, F4, and F3 in part); F2, F7, F8, F11, F12, F16 and F3's exit-code taxonomy remain open in phases 4–6. The header table says where each landed. |
+| [code-review-2026-08.md](code-review-2026-08.md) | **closed** | Engineering review of the runner, release state machine, query path, guards, roles, migrations, parsers, and CI. Eighteen findings — five high, seven medium, six low — of which twelve were reproduced against a throwaway PostGIS database. **Phases 1–6 landed 2026-08-07 through 2026-08-09**, all eighteen findings are implemented, and the review's header table says where each one now lives. |
 | [ml-capabilities.md](ml-capabilities.md) | **open** | Capability study of five proposed ML features. Recommends building two (calibration-star quality, probabilistic crossmatching), prototyping one, deferring two, and replacing one with a sixth idea. Nothing implemented, and the four architectural constraints in §0.3 are not yet decided. |
 | [local-catalogs.md](local-catalogs.md) | **open** | **Research survey**, not a design. Which astronomical sources distribute bulk files, where exactly to download them (CDS, IRSA, MAST, ESA Gaia Archive, AAVSO), what they cost on disk against a 12 TB budget, and whether each is worth mirroring locally — with reasoning. Skycat catalog support is local PostgreSQL/PostGIS support; remote catalog services are not an alternate implementation path. Verdicts: mirror Tycho-2, ATLAS-RefCat2, Gaia DR3 synthetic photometry, 2MASS; defer the billion-row surveys. Nothing implemented; two of its measurements gate the rest. |
 | [archive/package-publishing-report.md](archive/package-publishing-report.md) | archived | PyPI publishing has been completed and `skycat` is now on PyPI. The report is retained as historical readiness context for the first package-publishing lane. |
