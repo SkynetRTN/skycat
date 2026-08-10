@@ -89,7 +89,7 @@ Before the first package-index upload:
 Normal publish sequence:
 
 1. Merge the release branch through `dev` and protected `main`.
-2. Tag the protected `main` commit, for example `v0.1.5`.
+2. Tag the protected `main` commit, for example `v0.1.6`.
 3. Approve the `github-release` environment deployment if it is protected.
 4. Let the tag-push workflow publish to TestPyPI and validate the TestPyPI
    Simple API, JSON metadata, uploaded artifact hashes, README metadata source,
@@ -108,7 +108,7 @@ python -m venv /tmp/skycat-testpypi
 /tmp/skycat-testpypi/bin/python -m pip install \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  skycat==0.1.5
+  skycat==0.1.6
 /tmp/skycat-testpypi/bin/skycat --help
 ```
 
@@ -116,7 +116,7 @@ PyPI install check:
 
 ```bash
 python -m venv /tmp/skycat-pypi
-/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.5
+/tmp/skycat-pypi/bin/python -m pip install skycat==0.1.6
 /tmp/skycat-pypi/bin/skycat --help
 ```
 
@@ -126,13 +126,13 @@ Direct wheel install from a GitHub Release:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.5/skycat-0.1.5-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.6/skycat-0.1.6-py3-none-any.whl
 ```
 
 Source install from a Git tag:
 
 ```bash
-python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.5"
+python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.6"
 ```
 
 Both forms install Skycat software only. They do not create or populate the

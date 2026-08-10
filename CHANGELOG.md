@@ -5,7 +5,11 @@ source-controlled summary that release notes should start from.
 
 ## Unreleased
 
-Phases 1-3 of the August 2026 code review action plan
+No changes yet.
+
+## 0.1.6 - 2026-08-10
+
+Completed phases 1-6 of the August 2026 code review action plan
 (`docs/working/code-review-2026-08.md`).
 
 ### Fixed
@@ -48,18 +52,46 @@ Phases 1-3 of the August 2026 code review action plan
   it was missing.
 - `remove_release` reads the partition parent from `pg_inherits` instead of
   reconstructing it by string-splitting the partition name.
+- Phase B2 import swaps now set `SET LOCAL lock_timeout` and retry with bounded
+  backoff, so a queued swap cannot block readers indefinitely behind an open
+  reader transaction.
+- `SKYCAT_DB_STATEMENT_TIMEOUT` is now reader/default-scoped, with explicit
+  per-role overrides for bootstrap, admin, ingest and reader connections. Ingest
+  and migration work no longer inherit reader query timeouts accidentally.
+- `import --activate` is idempotent for unchanged imported releases. Already
+  ACTIVE releases report `activated=True`, and matching READY or SUPERSEDED
+  releases activate when validation passed or `--allow-warnings` permits it.
+- Database-driver connection and authentication failures now exit with code 2 as
+  configuration failures instead of sharing the operational-failure exit code.
+- Query functions reject non-queryable releases and re-check supplied
+  `ResolvedRelease` handles against the registry before using them, so stale
+  release references raise `CatalogQueryError` instead of returning a false empty
+  result.
+- Validation now warns on high rejected-row fractions, and `ra_range` /
+  `dec_range` checks report coordinate rejects honestly at warning level.
+- Release-state and lock documentation now matches the runner: `STAGING` is
+  legacy vocabulary for old stranded rows, Phase B1 takes only an ACCESS SHARE
+  lock on the parent while building the detached table, and Phase B2 is the short
+  ACCESS EXCLUSIVE swap.
+- Working documentation now marks the code-review note closed, archives the
+  completed package-publishing report, and deprecates remote catalog planning in
+  favor of local PostgreSQL/PostGIS-backed catalog support only.
 
 ### Added
 
 - `SKYCAT_DEBUG` — suppresses the CLI's friendly error messages so the original
   exception and its traceback reach the interpreter. Diagnosis only.
+- ADR 0002, documenting explicit stable failure semantics for CLI exit codes,
+  idempotent `import --activate`, and query release resolution.
 - `tests/test_import_failures.py` — imports that fail after the database has been
   touched, a region the suite did not previously exercise.
 - `tests/test_schema_drift.py` — asserts `CatalogBase.metadata` matches a freshly
   migrated database, so model/migration drift fails CI.
 - Coverage for `remove_release`'s destructive path, the CLI error contract, the
-  Alembic URL builder, and query-layer input validation. The suite moves from 179
-  to 247 tests.
+  Alembic URL builder, query-layer input validation, lock-timeout retries,
+  idempotent activation, stale release handles, validation warning gates, and
+  documentation command checks. The full PostGIS suite moves from 179 to 262
+  tests.
 
 ## 0.1.5 - 2026-08-08
 
