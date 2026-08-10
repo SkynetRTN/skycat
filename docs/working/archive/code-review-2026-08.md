@@ -1,15 +1,17 @@
 ---
-status: closed
+status: archived
 reviewed: 2026-08-07
+archived: 2026-08-10
+completed: 2026-08-09
 branch: docs/code-review-audit
 authority: code-inspection (skycat @ 7e7cf2d, origin/dev) + ruff/pyright/pytest gates + full PostGIS suite and twelve reproductions against a throwaway PostgreSQL 16 / PostGIS 3.5 on 127.0.0.1:5435
-implementation: phases 1-6 landed 2026-08-07 through 2026-08-09
+implementation: completed; phases 1-6 landed 2026-08-07 through 2026-08-09
 ---
 
 # Skycat code review, August 2026
 
 A second full review of the standalone package, the day after the
-[design review](archive/design-review.md) whose fourteen findings all landed.
+[design review](design-review.md) whose fourteen findings all landed.
 That review was about missing scaffolding — guides, contracts, an ADR, a
 `--require-postgis` escape hatch. This one is about the code: what the ingestion
 runner, the release state machine, the query path, the guards, and the migration
@@ -19,9 +21,10 @@ The gates are clean and the happy paths are correct. Every finding below is a
 failure path, and twelve of the eighteen were reproduced against a live
 database rather than inferred.
 
-> **Status: phases 1–6 landed (2026-08-07 through 2026-08-09).** All eighteen
-> findings have been implemented. The findings below are kept verbatim as the
-> record of what was wrong; the table says where each one now lives.
+> **Archived (2026-08-10).** The August code-review action plan is complete:
+> phases 1–6 landed 2026-08-07 through 2026-08-09, and all eighteen findings
+> have been implemented. The findings below are kept verbatim as the record of
+> what was wrong; the table says where each one now lives.
 > Three were resolved differently from the suggestion, and two of the review's
 > own claims turned out to be wrong — all noted under the table.
 >
@@ -1090,7 +1093,7 @@ recorder.
 
 ### Phase 5 — Stable-surface changes (F2, F3's exit-code taxonomy, F11)
 
-**Status.** Landed with [ADR 0002](../decisions/0002-explicit-stable-failures.md)
+**Status.** Landed with [ADR 0002](../../decisions/0002-explicit-stable-failures.md)
 and stable-surface docs updates. Three surfaces moved:
 
 - **Exit codes.** Connectivity and credential failures become code 2

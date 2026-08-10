@@ -14,8 +14,7 @@ If you want current behaviour, everything here is the wrong file. Start at
 A note lives in one of exactly two places, and the frontmatter `status` says
 which:
 
-- **`working/`** — `status: open` for active work, or `status: closed` for a
-  completed review that is still being kept with the active working notes.
+- **`working/`** — `status: open` for active work.
 - **`working/archive/`** — `status: archived`. Every item has landed or been
   explicitly dropped and nothing in it is outstanding. It is kept as the record
   of what was decided and why.
@@ -25,13 +24,13 @@ the repository before you move one, and if a note is archived with a caveat
 ("still needs an admin to…"), that caveat is an open item — the note is not
 archivable until it is closed or explicitly dropped.
 
-## Current state (audited 2026-08-09)
+## Current state (audited 2026-08-10)
 
 | Note | Status | Why |
 |---|---|---|
-| [code-review-2026-08.md](code-review-2026-08.md) | **closed** | Engineering review of the runner, release state machine, query path, guards, roles, migrations, parsers, and CI. Eighteen findings — five high, seven medium, six low — of which twelve were reproduced against a throwaway PostGIS database. **Phases 1–6 landed 2026-08-07 through 2026-08-09**, all eighteen findings are implemented, and the review's header table says where each one now lives. |
 | [ml-capabilities.md](ml-capabilities.md) | **open** | Capability study of five proposed ML features. Recommends building two (calibration-star quality, probabilistic crossmatching), prototyping one, deferring two, and replacing one with a sixth idea. Nothing implemented, and the four architectural constraints in §0.3 are not yet decided. |
 | [local-catalogs.md](local-catalogs.md) | **open** | **Research survey**, not a design. Which astronomical sources distribute bulk files, where exactly to download them (CDS, IRSA, MAST, ESA Gaia Archive, AAVSO), what they cost on disk against a 12 TB budget, and whether each is worth mirroring locally — with reasoning. Skycat catalog support is local PostgreSQL/PostGIS support; remote catalog services are not an alternate implementation path. Verdicts: mirror Tycho-2, ATLAS-RefCat2, Gaia DR3 synthetic photometry, 2MASS; defer the billion-row surveys. Nothing implemented; two of its measurements gate the rest. |
+| [archive/code-review-2026-08.md](archive/code-review-2026-08.md) | archived | Engineering review of the runner, release state machine, query path, guards, roles, migrations, parsers, and CI. Eighteen findings — five high, seven medium, six low — of which twelve were reproduced against a throwaway PostGIS database. **Phases 1–6 landed 2026-08-07 through 2026-08-09**, all eighteen findings are implemented, and the review's header table says where each one now lives. |
 | [archive/package-publishing-report.md](archive/package-publishing-report.md) | archived | PyPI publishing has been completed and `skycat` is now on PyPI. The report is retained as historical readiness context for the first package-publishing lane. |
 | [archive/remote-catalogs.md](archive/remote-catalogs.md) | archived, deprecated | Remote catalog support has been deprecated. The former service survey is retained as historical research only; local catalog support is the current implementation direction. |
 | [archive/remote-query-architecture-plan.md](archive/remote-query-architecture-plan.md) | archived, deprecated | Remote query architecture planning has been deprecated. Do not implement the archived `CatalogRemoteReader` package plan, remote provider registry, or remote service adapters. |
