@@ -39,6 +39,8 @@ DOCS = [
     REPO_ROOT / "docs" / "guides" / "provenance.md",
     REPO_ROOT / "docs" / "operations" / "runbook.md",
     REPO_ROOT / "docs" / "operations" / "performance.md",
+    REPO_ROOT / "docs" / "operations" / "ci.md",
+    REPO_ROOT / "docs" / "operations" / "release.md",
 ]
 #: Placeholder paths/flags that are illustrative by design. ``tycho2`` is the
 #: project's standing worked example for adding a family (README and
@@ -83,6 +85,67 @@ def _code_blocks(text: str, lang: str) -> list[str]:
     ]
 
 
+#: ``skycat`` *invoked*, as opposed to ``skycat`` the package directory passed to
+#: something else — ``uv run ruff check skycat tests`` is a correct command line
+#: in which ``tests`` is not a subcommand. So the token has to sit in command
+#: position, and every form this project's docs actually reach for is listed
+#: below. Getting either direction wrong is silent: too loose and the test
+#: invents commands nobody documented, too tight and it checks nothing at all.
+_SKYCAT_INVOCATION = re.compile(
+    r"""
+    (?:
+        ^                    # start of the (already stripped) line
+      | [$|;]\s* | &&\s*     # after a prompt or a shell separator
+      | (?:\w+=\S*\s+)+      # after inline env assignments: SKYCAT_DB_PORT=… skycat …
+      | \brun\s+             # after a runner: uv run, poetry run, compose run
+      | [\w.-]*/             # at the end of a path: /tmp/pkgcheck/bin/skycat
+    )
+    skycat\s+(.+)
+    """,
+    re.VERBOSE,
+)
+
+
+def _invocation(line: str) -> list[str] | None:
+    """The argument tokens of a ``skycat`` command line, or None if it isn't one."""
+    match = _SKYCAT_INVOCATION.search(line)
+    return match.group(1).split() if match else None
+
+
+#: What the matcher must and must not treat as a ``skycat`` invocation, pinned in
+#: both directions. The regex is load-bearing — it decides whether a documented
+#: page is checked or quietly skipped — and both failure modes have already
+#: happened once: `ruff check skycat tests` was read as a `skycat tests` command,
+#: and the fix for that initially stopped recognising an env-var prefix, which is
+#: the most natural way to write an example in a project whose whole
+#: configuration story is ``SKYCAT_DB_*``.
+_INVOCATION_CASES = [
+    # (documented line, expected first argument token or None for "not a command")
+    ("skycat releases apass", "releases"),
+    ("$ skycat cone apass --ra 10 --dec 1 --radius-arcmin 5", "cone"),
+    ("uv run skycat init", "init"),
+    ("uv run skycat --json discover", "--json"),
+    ("/tmp/pkgcheck/bin/skycat --help", "--help"),
+    ("SKYCAT_DB_PORT=5999 skycat releases", "releases"),
+    ("SKYCAT_REQUIRE_POSTGIS=1 SKYCAT_DB_PORT=5442 skycat health", "health"),
+    # `skycat` as an argument to something else, never as the command:
+    ("uv run ruff check skycat tests", None),
+    ("from skycat import CatalogReader", None),
+    ("docker compose -f infra/docker/compose.yaml build skycat-postgres", None),
+    (
+        "docker compose -f infra/docker/compose.yaml --profile skycat-tools "
+        "run --rm skycat-init",
+        None,
+    ),
+]
+
+
+@pytest.mark.parametrize("line,expected", _INVOCATION_CASES)
+def test_invocation_matcher_requires_command_position(line, expected):
+    tokens = _invocation(line)
+    assert (tokens[0] if tokens else None) == expected
+
+
 def _cli_surface() -> tuple[dict[str, set[str]], set[str]]:
     commands = {}
     for name, cmd in cli_group.commands.items():
@@ -104,10 +167,9 @@ def test_documented_cli_commands_and_flags_exist(doc):
     for block in _code_blocks(doc.read_text(encoding="utf-8"), "bash"):
         for raw in block.splitlines():
             line = raw.split("#", 1)[0].strip()
-            match = re.search(r"\bskycat\b\s+(.*)", line)
-            if not match:
+            tokens = _invocation(line)
+            if tokens is None:
                 continue
-            tokens = match.group(1).split()
             sub = next((t for t in tokens if not t.startswith("-")), None)
             if sub is None or any(p in sub for p in PLACEHOLDERS):
                 continue
@@ -197,10 +259,9 @@ def test_group_flags_precede_the_subcommand(doc):
     for block in _code_blocks(doc.read_text(encoding="utf-8"), "bash"):
         for raw in block.splitlines():
             line = raw.split("#", 1)[0].strip()
-            match = re.search(r"\bskycat\b\s+(.*)", line)
-            if not match:
+            tokens = _invocation(line)
+            if tokens is None:
                 continue
-            tokens = match.group(1).split()
             sub_index = next(
                 (i for i, t in enumerate(tokens) if not t.startswith("-")), None
             )

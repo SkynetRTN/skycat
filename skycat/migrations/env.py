@@ -7,6 +7,9 @@
 * The Alembic version table lives in the ``catalog_registry`` schema; the three
   catalog schemas are ensured to exist before migrations run so a fresh database
   bootstraps cleanly.
+* Autogenerate sees only the three catalog schemas, and within ``catalog_data``
+  only the partition parents — see ``skycat/database/autogen.py`` for why, and
+  ``tests/test_schema_drift.py`` for the test that keeps it true.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from sqlalchemy import create_engine, text
 
 from skycat.config import CatalogDatabaseConfig, load_settings
 from skycat.constants import ALL_SCHEMAS, CatalogRole
+from skycat.database.autogen import autogenerate_options
 from skycat.database.base import CatalogBase
 from skycat.constants import SCHEMA_REGISTRY
 
@@ -28,7 +32,14 @@ import skycat.models  # noqa: F401
 config = context.config
 if config.config_file_name is not None:
     try:
-        fileConfig(config.config_file_name)
+        # disable_existing_loggers=False, unlike Alembic's generated template.
+        # The default is True, and it does not mean "reset the ini's loggers" —
+        # it disables *every* logger already created in the process. In a
+        # long-lived process that migrates and then imports (the test fixture,
+        # and any service that calls `initialize_catalog_database`), that
+        # silences `skycat.ingestion` for the rest of its life, taking the
+        # structured phase events and the failure recorder's ERROR with it.
+        fileConfig(config.config_file_name, disable_existing_loggers=False)
     except Exception:  # pragma: no cover - logging is best-effort
         pass
 
@@ -66,7 +77,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         version_table_schema=SCHEMA_REGISTRY,
-        include_schemas=True,
+        **autogenerate_options(),
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -82,7 +93,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             version_table_schema=SCHEMA_REGISTRY,
-            include_schemas=True,
+            **autogenerate_options(),
         )
         with context.begin_transaction():
             context.run_migrations()

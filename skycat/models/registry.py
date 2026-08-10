@@ -24,11 +24,13 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -78,6 +80,18 @@ class CatalogRelease(CatalogBase, TimestampMixin):
     __tablename__ = "catalog_release"
     __table_args__ = (
         UniqueConstraint("family_id", "name", name="uq_catalog_release_family_name"),
+        # "At most one ACTIVE release per family", enforced by the database
+        # rather than by the activation code path. Created by
+        # ``migrations/versions/0001_initial_registry_postgis.py``; declared here
+        # so the metadata says so too — while it was migration-only, every
+        # `alembic revision --autogenerate` pass proposed dropping the one index
+        # the whole release model rests on.
+        Index(
+            "uq_active_release_per_family",
+            "family_id",
+            unique=True,
+            postgresql_where=text(f"state = '{CatalogReleaseState.ACTIVE.value}'"),
+        ),
         {"schema": SCHEMA_REGISTRY},
     )
 
@@ -120,7 +134,12 @@ class CatalogRelease(CatalogBase, TimestampMixin):
 
     importer_version: Mapped[str | None] = mapped_column(String(32))
     notes: Mapped[str | None] = mapped_column(Text)
-    failure_detail: Mapped[dict | None] = mapped_column(JSONB)
+    # ``none_as_null`` because the operator query is "which releases have a
+    # recorded failure?". SQLAlchemy's JSON types default to storing Python None
+    # as the JSON scalar ``null``, which is a value: ``failure_detail IS NOT
+    # NULL`` then matched every release ever imported, since a clean import
+    # clears the field. Only a real failure now makes the column non-NULL.
+    failure_detail: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
 
     import_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     import_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

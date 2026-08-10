@@ -8,6 +8,7 @@ be reversed against a record of what it was actually buying.
 | # | Decision | Status |
 |---|---|---|
 | [0001](0001-postgresql-postgis-only.md) | PostgreSQL/PostGIS only — no SQLite, no Python-side spatial fallback | Accepted |
+| [0002](0002-explicit-stable-failures.md) | Stable failures are explicit | Accepted |
 
 ## Writing one
 

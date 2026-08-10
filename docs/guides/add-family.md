@@ -89,10 +89,15 @@ class Tycho2Source(CatalogBase):
     """A single Tycho-2 astrometric source (release-partitioned)."""
 
     __tablename__ = "tycho2_source"
-    __table_args__ = {
-        "schema": SCHEMA_DATA,
-        "postgresql_partition_by": "LIST (release_id)",
-    }
+    # Declared here, created by the migration — the names must match exactly.
+    __table_args__ = (
+        Index("ix_tycho2_source_geom", "geom", postgresql_using="gist"),
+        Index("ix_tycho2_source_native_id", "native_id"),
+        {
+            "schema": SCHEMA_DATA,
+            "postgresql_partition_by": "LIST (release_id)",
+        },
+    )
 
     release_id: Mapped[int] = mapped_column(Integer, primary_key=True, nullable=False)
     id: Mapped[int] = mapped_column(
@@ -138,6 +143,12 @@ Requirements, not suggestions:
 - **Per-release oddities go in `extra` (JSONB), not new columns.** A flag that
   only one release carries is exactly what `extra` is for. A column that every
   release carries and that anyone will filter or sort on should be typed.
+- **Declare every parent index in `__table_args__`, under the same name the
+  migration creates it with.** The model does not create them — the parent is
+  raw DDL (step 4) — but `CatalogBase.metadata` has to *describe* the migrated
+  schema, and `tests/test_schema_drift.py` fails if it does not. An index that
+  exists only in a migration is one the next autogenerate pass proposes
+  dropping.
 
 Register the class in `skycat/models/__init__.py` — importing that module is
 what attaches the table to `CatalogBase.metadata`, and Alembic, the partition
@@ -205,6 +216,18 @@ Copy the shape of `0003_vsx.py`. It is raw `op.execute` DDL rather than
 `op.create_table`, because Alembic's table builder cannot express `PARTITION BY
 LIST` or a `GENERATED ALWAYS ... STORED` geography column.
 
+**Do not write this revision with `alembic revision --autogenerate`.** It cannot
+produce a partitioned parent or a generated geography column, so what it writes
+for a new family is wrong in exactly the ways this step exists to get right.
+Autogenerate has one use here — *checking*. `uv run alembic check` against a
+migrated database must report no operations; if it reports any, the model and
+the migrations disagree and one of them is wrong. `skycat/database/autogen.py`
+is what keeps that check meaningful: it limits reflection to the three catalog
+schemas and, within `catalog_data`, to the partition parents, so autogenerate
+never sees the live partitions, the `_incoming` build tables, the retained
+`catalog_staging` rejects, or PostGIS's own `tiger`/`topology` schemas. Without
+it a stray autogenerate emits a revision that drops the active catalog.
+
 ```python
 revision: str = "0007"
 down_revision: Union[str, None] = "0006"      # linear chain; never a second head
@@ -239,6 +262,9 @@ Requirements:
   parent index onto the detached replacement table before `ATTACH`, so `ATTACH`
   adopts them without a rebuild scan. An index you forget here is an index no
   partition ever gets.
+- **Every index here is also declared on the model** (step 2), under the same
+  name. The migration creates them; the model describes them. The drift test
+  compares the two.
 - **Reuse the geom expression.** Take it from `skycat/spatial`'s
   `GEOM_GENERATED_EXPR`, or copy the `GEOM_EXPR` constant verbatim from a
   sibling migration. Retyping the `CASE WHEN ra_deg > 180` mapping is how two
@@ -247,11 +273,12 @@ Requirements:
 - **Touch only your own table.** A migration that alters another family's table
   turns a family addition into a cross-family break.
 
-Verify without a database:
+Verify:
 
 ```bash
-uv run pytest tests/test_migration_graph.py -q
+uv run pytest tests/test_migration_graph.py -q  # no database needed
 uv run skycat migrate-status          # needs a database; shows current vs head
+uv run alembic check                  # needs a database; model vs migrations
 ```
 
 ## 5. `skycat/validation/tycho2.py` — family checks *(optional)*
@@ -338,6 +365,8 @@ to type a column that anyone will actually query.
 - [ ] Units in every column name; missing values are `NULL`.
 - [ ] Migration adds one revision on the current head and touches one table.
 - [ ] GiST index on `geom` and a btree on `native_id`, both on the parent.
+- [ ] The same index names declared in the model's `__table_args__`;
+      `uv run alembic check` reports no operations.
 - [ ] Sample fixture committed *and* allow-listed in `.gitignore`.
 - [ ] Family added to the `imported` fixture.
 - [ ] Integration suite run with `--require-postgis`.

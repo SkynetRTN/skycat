@@ -1,15 +1,17 @@
 ---
-status: open
+status: archived
 reviewed: 2026-08-07
+archived: 2026-08-10
+completed: 2026-08-09
 branch: docs/code-review-audit
 authority: code-inspection (skycat @ 7e7cf2d, origin/dev) + ruff/pyright/pytest gates + full PostGIS suite and twelve reproductions against a throwaway PostgreSQL 16 / PostGIS 3.5 on 127.0.0.1:5435
-implementation: not-started
+implementation: completed; phases 1-6 landed 2026-08-07 through 2026-08-09
 ---
 
 # Skycat code review, August 2026
 
 A second full review of the standalone package, the day after the
-[design review](archive/design-review.md) whose fourteen findings all landed.
+[design review](design-review.md) whose fourteen findings all landed.
 That review was about missing scaffolding — guides, contracts, an ADR, a
 `--require-postgis` escape hatch. This one is about the code: what the ingestion
 runner, the release state machine, the query path, the guards, and the migration
@@ -18,6 +20,77 @@ environment actually do when something goes wrong.
 The gates are clean and the happy paths are correct. Every finding below is a
 failure path, and twelve of the eighteen were reproduced against a live
 database rather than inferred.
+
+> **Archived (2026-08-10).** The August code-review action plan is complete:
+> phases 1–6 landed 2026-08-07 through 2026-08-09, and all eighteen findings
+> have been implemented. The findings below are kept verbatim as the record of
+> what was wrong; the table says where each one now lives.
+> Three were resolved differently from the suggestion, and two of the review's
+> own claims turned out to be wrong — all noted under the table.
+>
+> | # | Finding | Phase | Where it landed |
+> |---|---|---|---|
+> | F1 | Failed `--replace` poisons the checksum | 1 | `ingestion/runner.py` — provenance writes moved into the post-swap finalize block; the attempt's provenance parked on `IngestionRun.detail` |
+> | F2 | `import --activate` fails on an already-active release | 5 | `ingestion/runner.py`, `tests/test_integration.py` — skipped ACTIVE releases report `activated=True`; skipped READY/SUPERSEDED releases activate when the validation gate permits it |
+> | F3 | Tracebacks on operator input | 2, 5 | `cli/main.py` — `_FriendlyGroup` renders operator errors without tracebacks; DB driver connection/authentication failures now map to exit code 2; `SKYCAT_DEBUG=1` restores the traceback |
+> | F6 | Failed `--replace` strands a good release | 1 | `ingestion/runner.py`, `health.py` — the STAGING demotion is gone; in-flight status keys off the `IngestionRun` row |
+> | F7 | Phase B2 can wait unboundedly for a reader lock | 4 | `ingestion/runner.py`, `config.py`, `docs/operations/runbook.md` — `SET LOCAL lock_timeout` on the swap transaction with bounded retries and operator-facing events |
+> | F8 | Reader statement timeout caps ingest and migrations | 4 | `config.py`, `database/engine.py`, `README.md` — generic `SKYCAT_DB_STATEMENT_TIMEOUT` is reader/default-scoped, with per-role overrides |
+> | F9 | Failure recorder fails silently | 1 | `ingestion/runner.py` — `_record_failure()` on an independent short-lived engine, logging `import.record_failed` at ERROR |
+> | F11 | Stale/invalid resolved releases return `[]` | 5 | `query/cone.py`, `query/crossmatch.py`, `client.py` — queryable states are enforced and supplied `ResolvedRelease` objects are rechecked against the registry |
+> | F12 | Rejected-row fraction is not checked, coordinate checks always pass | 6 | `validation/common.py`, `tests/test_integration.py` — high reject fractions warn, coordinate reject checks report honestly at WARNING level, and activation is gated on those warnings |
+> | F13 | `failure_detail = None` writes JSON `null` | 1 | `models/registry.py` — `JSONB(none_as_null=True)` |
+> | F5 | Special character in a password breaks `init` | 2 | `database/migrate.py` — `_ini_literal()` at the configparser boundary |
+> | F10 | Caller-input errors escape as `ValueError` | 2 | `query/cone.py`, `query/crossmatch.py` — `_validate_centre()`, `_validate_limit()`, shared `_python_type()` |
+> | F14 | DR10 parser drops non-numeric lines | 2 | `ingestion/parsers/apass.py` — explicit header recognition, everything else counted |
+> | F18 | Two stable docs outside the doc test | 2 | `tests/test_docs.py` — `ci.md` and `release.md` added, plus a rewritten invocation matcher |
+> | F4 | Autogenerate drops every partition | 3 | `database/autogen.py` (new), `migrations/env.py`, all four family models, `models/registry.py`, `database/base.py` |
+> | F15 | `remove_release` string-splits the parent | 3 | `ingestion/maintenance.py` — `inhparent::regclass` from the existing `pg_inherits` query |
+> | F16 | Release-state and lock docs drifted from the runner | 6 | `docs/reference/architecture.md`, `docs/operations/runbook.md`, `CLAUDE.md` — state diagram no longer assigns STAGING, and Phase B1's parent ACCESS SHARE lock is described accurately |
+> | F17 | Dead capture group in the replicator | 3 | `ingestion/runner.py` |
+>
+> **Open.** None.
+>
+> **Deviations.** F5 was fixed with the one-line configparser escape rather than
+> the cleaner `cfg.attributes["connection"]` route, because `migrations/env.py`
+> does not read `config.attributes` and restructuring `run_migrations_online()`
+> would have collided with phase 3's edits to the same `context.configure`
+> calls. F4 used `include_name` rather than the suggested `include_object`: the
+> object hook runs after reflection, which is too late both for `tiger`
+> (`permission denied`) and for a 128M-row family's partitions. F6 took the
+> `IngestionRun` route rather than save-and-restore, on the reasoning that a
+> release's state should describe the partition on disk *always*, and that
+> save-and-restore only shrinks the window in which the row lies — and requires
+> the failure handler to run to be correct, which is exactly what F9 shows can
+> fail to happen.
+>
+> **Two claims in this review were wrong.** F9 says the recorder "can fail
+> silently"; it always did. Its query was `SELECT id FROM catalog_release r JOIN
+> catalog_family f`, and both tables have an `id` column, so PostgreSQL rejected
+> it as `AmbiguousColumn` on every invocation and the bare `except Exception:
+> pass` swallowed it. No failure had ever been recorded — no FAILED state, no
+> `failure_detail`, no run-row update — which is also why F6's reproduction
+> found releases stranded in STAGING. F18 says adding the two documents "passes
+> today"; it does not. `uv run ruff check skycat tests` was read as a `skycat
+> tests` invocation, because the matcher accepted `skycat` anywhere on a line.
+> The command lines were correct, so the test was fixed rather than the docs.
+>
+> **Found while implementing**, outside the review's scope but fixed here:
+> `migrations/env.py` called `fileConfig()` with the default
+> `disable_existing_loggers=True`, which disables every logger already created
+> in the process — so any long-lived process that migrated and then imported had
+> `skycat.ingestion` silenced for the rest of its life. `NAMING_CONVENTION["ix"]`
+> was `ix_%(column_0_label)s`, and a column label carries the schema for a
+> schema-qualified table, so the metadata's index names could never match the
+> migrations'. `docs/guides/add-family.md` had a "Verify without a database:"
+> block listing a command annotated "needs a database".
+>
+> **Consequence for phase 6.** F6's resolution changes what F16's diagram
+> correction should say. The state diagram should now *lose*
+> `REGISTERED → STAGING`, `STAGING → READY`, `STAGING → FAILED` and
+> `FAILED → STAGING`, and gain `REGISTERED → READY` plus self-loops for READY
+> and SUPERSEDED on a failed replace. The two arcs F16 asks for no longer need
+> adding — the runner no longer takes them.
 
 ## 1. Verdict
 
@@ -896,13 +969,11 @@ Ranked by what a failure would cost, not by how hard the test is to write.
 
 ## 5. Action plan
 
-Six phases. Phases 1–3 carry the four remaining high-severity findings and are
-bug fixes to behaviour that is undocumented or actively contradicted by the
-docs, so none of them needs a decision record. **Phase 5 changes
-documented-stable surfaces and must carry an ADR and a docs update in the same
-commit**, per the docs-are-tested convention. Phases 1, 2 and 3 are mutually
-independent and can be worked in parallel; 4, 5 and 6 each depend on one of
-them.
+Six phases, now complete. Phases 1–3 carried the four remaining high-severity findings and
+were bug fixes to behaviour that was undocumented or actively contradicted by
+the docs, so none of them needed a decision record. **Phase 5 changed
+documented-stable surfaces and landed with ADR 0002 plus docs updates**, per
+the docs-are-tested convention.
 
 ```
  1 failed imports ──┬── 4 lock/timeout safety
@@ -945,7 +1016,7 @@ with `--require-postgis`.
 ### Phase 2 — Restore the CLI error contract, minus the exit-code change (F3 partial, F5, F10, F14, F18)
 
 *Scope.* Extend `_FriendlyGroup` to the uncaught exception families, mapping
-all of them to code 1 for now (the 1-vs-2 question is phase 4). Fix the Alembic
+all of them to code 1 for now (the 1-vs-2 question landed in phase 5). Fix the Alembic
 URL escaping. Raise `CatalogQueryError` for caller-input errors in the query
 layer. Count non-numeric DR10 lines. Add the two missing docs to the doc test.
 
@@ -996,6 +1067,8 @@ migrated database emits an empty migration and does not touch `tiger`,
 
 ### Phase 4 — Lock and timeout safety (F7, F8)
 
+**Status.** Landed on `dev` before the phase 5 pass.
+
 *Scope.* `SET LOCAL lock_timeout` plus bounded retry on the B2 transaction;
 role-scoped statement timeouts.
 
@@ -1020,8 +1093,8 @@ recorder.
 
 ### Phase 5 — Stable-surface changes (F2, F3's exit-code taxonomy, F11)
 
-**This phase changes documented-stable behaviour and needs a decision record
-plus a docs update in the same commit.** Three surfaces move:
+**Status.** Landed with [ADR 0002](../../decisions/0002-explicit-stable-failures.md)
+and stable-surface docs updates. Three surfaces moved:
 
 - **Exit codes.** Connectivity and credential failures become code 2
   (configuration) instead of the accidental 1. `api-stability.md:48-54` must be
@@ -1031,7 +1104,7 @@ plus a docs update in the same commit.** Three surfaces move:
   rather than reported as a failure. This is what the contract already promises
   ("an `--activate` that exits 0 *did* activate"), so the ADR is short, but the
   table in `api-stability.md` gains a row and the runbook gains a paragraph.
-- **Query resolution.** Rejecting a STAGING/FAILED release, and re-resolving a
+- **Query resolution.** Rejecting a STAGING/FAILED release, and re-checking a
   stale cache entry rather than returning `[]`, changes what
   `CatalogReader.cone()` does for callers who currently get an empty list.
   `api-stability.md`'s "Query row dicts" section and the reader lifecycle
@@ -1060,6 +1133,8 @@ F1's.
 
 ### Phase 6 — Validation gating and documentation accuracy (F12, F16)
 
+**Status.** Landed on `phase-6-validation-doc-accuracy`.
+
 *Scope.* Add the reject-rate warning and make `ra_range`/`dec_range` report
 honestly; correct the release-state diagram and the "no lock on the parent"
 sentence.
@@ -1070,10 +1145,11 @@ sentence.
 *Tests that must exist first.* A `postgis`-marked test that a source whose
 rejected fraction exceeds the threshold produces a `passed_with_warnings`
 status and is not activated by `--activate` without `--allow-warnings`, and a
-counterpart that a small rejected fraction still passes clean. The existing
-`test_short_import_warns_against_the_expected_row_count` must keep passing —
-the six-row fixture has one rejected row in seven, so pick the threshold with
-that in mind or adjust the fixture deliberately.
+counterpart clean source that passes without warnings. A small coordinate-reject
+source stays below the reject-rate threshold, while the coordinate warning still
+fires honestly. The existing `test_short_import_warns_against_the_expected_row_count`
+must keep passing — the six-row fixture has one rejected row in seven, so pick
+the threshold with that in mind or adjust the fixture deliberately.
 
 *Acceptance.* A source with a high coordinate-rejection rate cannot
 auto-activate. `docs/reference/architecture.md`'s state diagram matches the

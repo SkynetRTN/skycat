@@ -8,9 +8,15 @@ reachable catalog PostGIS database (skipped otherwise — see conftest).
 
 from __future__ import annotations
 
+from dataclasses import replace
+from importlib import import_module
+from pathlib import Path
+
 import pytest
+from click.testing import CliRunner
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
+from sqlalchemy.orm import Session
 
 from skycat.config import CatalogConfigError, CatalogRole
 from skycat.constants import ALL_SCHEMAS
@@ -26,6 +32,8 @@ from skycat.query import (
     lookup_native_id,
 )
 from skycat.spatial import angular_separation_deg
+from skycat.registry import activate_release, resolve_release
+from skycat.registry.catalog_defs import get_family_def
 
 pytestmark = pytest.mark.postgis
 
@@ -34,6 +42,91 @@ def _reader(settings):
     return create_catalog_engine(
         settings.config_for(CatalogRole.READER), pool_size=1, max_overflow=0
     )
+
+
+def _ingest(settings):
+    return create_catalog_engine(
+        settings.config_for(CatalogRole.INGEST), pool_size=1, max_overflow=0
+    )
+
+
+def _activate(settings, family: str, name: str) -> None:
+    eng = _ingest(settings)
+    try:
+        with Session(eng) as session:
+            rel = resolve_release(session, family, name)
+            assert rel is not None
+            activate_release(session, rel)
+            session.commit()
+    finally:
+        eng.dispose()
+
+
+def _release_state(settings, family: str, name: str) -> str:
+    eng = _reader(settings)
+    try:
+        with eng.connect() as conn:
+            return conn.execute(
+                text(
+                    "SELECT r.state FROM catalog_registry.catalog_release r "
+                    "JOIN catalog_registry.catalog_family f ON f.id = r.family_id "
+                    "WHERE f.slug = :family AND r.name = :name"
+                ),
+                {"family": family, "name": name},
+            ).scalar_one()
+    finally:
+        eng.dispose()
+
+
+def _invoke_cli(settings, monkeypatch, *args):
+    cli_main = import_module("skycat.cli.main")
+    monkeypatch.setattr(cli_main, "load_settings", lambda: settings)
+    return CliRunner().invoke(cli_main.main, list(args), catch_exceptions=False)
+
+
+def _patch_apass_dr10_expected(monkeypatch, expected_rows: int) -> None:
+    """Patch only the runner's APASS DR10 expectation for this import attempt."""
+    runner = import_module("skycat.ingestion.runner")
+    original = get_family_def("apass")
+    assert original is not None
+    releases = tuple(
+        replace(rel, approx_row_count=expected_rows) if rel.slug == "dr10" else rel
+        for rel in original.releases
+    )
+    patched = replace(original, releases=releases)
+    monkeypatch.setattr(
+        runner,
+        "get_family_def",
+        lambda slug: patched if slug.lower() == "apass" else get_family_def(slug),
+    )
+
+
+def _apass_dr10_source(
+    tmp_path: Path,
+    name: str,
+    *,
+    valid_rows: int,
+    bad_ra_rows: int = 0,
+    bad_dec_rows: int = 0,
+) -> Path:
+    """Write a temporary APASS DR10 source with controlled coordinate rejects."""
+    source_dir = tmp_path / name
+    source_dir.mkdir()
+    fixture_lines = (Path(__file__).parent / "data" / "apass_dr10_sample.txt").read_text().splitlines()
+    header = fixture_lines[0]
+    valid = fixture_lines[1:1 + valid_rows]
+    invalid: list[str] = []
+    templates = fixture_lines[1:7]
+    for index in range(bad_ra_rows + bad_dec_rows):
+        fields = templates[index % len(templates)].split()
+        fields[0] = f"090-BAD{index:04d}"
+        if index < bad_ra_rows:
+            fields[1] = "999.000000"
+        else:
+            fields[3] = "99.000000"
+        invalid.append(" ".join(fields))
+    (source_dir / "zp_phase6.txt").write_text("\n".join([header, *valid, *invalid]) + "\n")
+    return source_dir
 
 
 def test_schemas_and_postgis(imported):
@@ -85,6 +178,40 @@ def test_cone_active_and_explicit_release(imported):
         imported, "apass", 0.000236, 1.886943, radius_deg=0.1, release="DR6"
     )
     assert any(r["native_id"] == "0020120136" for r in dr6)
+
+
+def test_import_activate_on_already_active_skip_exits_zero(imported, monkeypatch):
+    _activate(imported, "apass", "DR10")
+
+    res = _invoke_cli(imported, monkeypatch, "import", "apass", "dr10", "--activate")
+
+    assert res.exit_code == 0, res.output
+    assert "activated=True" in res.output
+    assert "skipped: already imported" in res.output
+    assert _release_state(imported, "apass", "DR10") == "active"
+
+
+def test_import_activate_on_skipped_ready_release_activates(imported, monkeypatch):
+    _activate(imported, "apass", "DR10")
+    import_release(imported, "apass", "dr6", replace=True, force=True)
+    assert _release_state(imported, "apass", "DR6") == "ready"
+
+    try:
+        res = _invoke_cli(
+            imported,
+            monkeypatch,
+            "import",
+            "apass",
+            "dr6",
+            "--activate",
+            "--allow-warnings",
+        )
+        assert res.exit_code == 0, res.output
+        assert "activated=True" in res.output
+        assert "skipped: already imported" in res.output
+        assert _release_state(imported, "apass", "DR6") == "active"
+    finally:
+        _activate(imported, "apass", "DR10")
 
 
 def test_cone_ra_wraparound(imported):
@@ -271,6 +398,120 @@ def test_expected_row_count_is_recorded_from_the_family_def(imported):
     assert expected == 128_632_615
 
 
+def test_high_coordinate_reject_rate_blocks_auto_activation(
+    imported, tmp_path, monkeypatch
+):
+    """A source with many coordinate rejects imports, but cannot auto-activate.
+
+    DR10 is made non-active first so this exercises the normal activation gate,
+    not the in-place ACTIVE replacement self-loop.
+    """
+    source = _apass_dr10_source(
+        tmp_path, "high-reject-dr10", valid_rows=1, bad_ra_rows=1, bad_dec_rows=1
+    )
+    _activate(imported, "apass", "DR6")
+    try:
+        with monkeypatch.context() as m:
+            _patch_apass_dr10_expected(m, expected_rows=1)
+            report = import_release(
+                imported,
+                "apass",
+                "dr10",
+                activate=True,
+                replace=True,
+                force=True,
+                explicit_dir=source,
+            )
+
+        checks = {check["name"]: check for check in report.checks}
+        assert report.validation_status == "passed_with_warnings"
+        assert report.activated is False
+        assert report.state == "ready"
+        assert checks["reject_rate"]["level"] == "warning"
+        assert checks["reject_rate"]["passed"] is False
+        assert "2/3 rows rejected" in checks["reject_rate"]["detail"]
+        assert checks["ra_range"]["level"] == "warning"
+        assert checks["ra_range"]["passed"] is False
+        assert checks["dec_range"]["level"] == "warning"
+        assert checks["dec_range"]["passed"] is False
+        assert _release_state(imported, "apass", "DR6") == "active"
+        assert _release_state(imported, "apass", "DR10") == "ready"
+    finally:
+        import_release(
+            imported,
+            "apass",
+            "dr10",
+            activate=True,
+            allow_warnings=True,
+            replace=True,
+            force=True,
+        )
+
+
+def test_clean_import_has_passing_reject_rate(imported, tmp_path, monkeypatch):
+    source = _apass_dr10_source(tmp_path, "clean-dr10", valid_rows=5)
+    try:
+        with monkeypatch.context() as m:
+            _patch_apass_dr10_expected(m, expected_rows=5)
+            report = import_release(
+                imported,
+                "apass",
+                "dr10",
+                replace=True,
+                force=True,
+                explicit_dir=source,
+            )
+
+        checks = {check["name"]: check for check in report.checks}
+        assert report.validation_status == "passed"
+        assert checks["reject_rate"]["passed"] is True
+        assert checks["ra_range"]["passed"] is True
+        assert checks["dec_range"]["passed"] is True
+    finally:
+        import_release(
+            imported,
+            "apass",
+            "dr10",
+            activate=True,
+            allow_warnings=True,
+            replace=True,
+            force=True,
+        )
+
+
+def test_small_coordinate_reject_fraction_does_not_trip_reject_rate(
+    imported, tmp_path, monkeypatch
+):
+    source = _apass_dr10_source(tmp_path, "low-reject-dr10", valid_rows=5, bad_ra_rows=1)
+    try:
+        with monkeypatch.context() as m:
+            _patch_apass_dr10_expected(m, expected_rows=5)
+            report = import_release(
+                imported,
+                "apass",
+                "dr10",
+                replace=True,
+                force=True,
+                explicit_dir=source,
+            )
+
+        checks = {check["name"]: check for check in report.checks}
+        assert report.validation_status == "passed_with_warnings"
+        assert checks["reject_rate"]["passed"] is True
+        assert checks["ra_range"]["passed"] is False
+        assert checks["dec_range"]["passed"] is True
+    finally:
+        import_release(
+            imported,
+            "apass",
+            "dr10",
+            activate=True,
+            allow_warnings=True,
+            replace=True,
+            force=True,
+        )
+
+
 def test_default_release_id_column_is_gone(imported):
     """Dropped in 0006: the active release is resolved from state, one source."""
     eng = _reader(imported)
@@ -358,6 +599,126 @@ def test_prevent_multiple_active(imported):
 def test_active_release_deletion_protected(imported):
     with pytest.raises(CatalogConfigError):
         remove_release(imported, "apass", "DR10")  # active, no --force
+
+
+def _register_removable_release(settings, name: str, table_template: str) -> tuple[int, str]:
+    """Register an inactive APASS release with a real attached partition and an
+    ingestion run, so the destructive path has something to destroy.
+
+    Synthetic rather than one of the fixture's six releases: the fixture is
+    session-scoped, other tests in this module pin ``apass_source_r1`` and
+    ``_r2`` by name, and a removed release cannot be put back under its old id.
+    Created as INGEST because that is the role that owns ``catalog_data`` tables
+    in production and the role ``remove_release`` itself runs as. Returns the
+    new release id and the partition name (which needs that id).
+    """
+    eng = create_catalog_engine(
+        settings.config_for(CatalogRole.INGEST), pool_size=1, max_overflow=0
+    )
+    try:
+        with eng.begin() as conn:
+            release_id = conn.execute(
+                text(
+                    "INSERT INTO catalog_registry.catalog_release "
+                    "(family_id, name, internal_schema_version, state, validation_status) "
+                    "SELECT f.id, :n, 1, 'superseded', 'passed' "
+                    "FROM catalog_registry.catalog_family f WHERE f.slug='apass' "
+                    "RETURNING id"
+                ),
+                {"n": name},
+            ).scalar_one()
+            table = table_template.format(id=release_id)
+            conn.execute(
+                text(
+                    f'CREATE TABLE catalog_data."{table}" PARTITION OF '
+                    f"catalog_data.apass_source FOR VALUES IN ({release_id})"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE catalog_registry.catalog_release "
+                    "SET production_table = :p WHERE id = :i"
+                ),
+                {"p": f"catalog_data.{table}", "i": release_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO catalog_registry.ingestion_run "
+                    "(release_id, status, stage) VALUES (:i, 'succeeded', 'attach')"
+                ),
+                {"i": release_id},
+            )
+        return release_id, table
+    finally:
+        eng.dispose()
+
+
+def _forget_removable_release(settings, release_id: int, table: str) -> None:
+    """Undo `_register_removable_release` if the test did not get that far."""
+    eng = create_catalog_engine(
+        settings.config_for(CatalogRole.INGEST), pool_size=1, max_overflow=0
+    )
+    try:
+        with eng.begin() as conn:
+            conn.execute(text(f'DROP TABLE IF EXISTS catalog_data."{table}"'))
+            conn.execute(
+                text("DELETE FROM catalog_registry.catalog_release WHERE id = :i"),
+                {"i": release_id},
+            )
+    finally:
+        eng.dispose()
+
+
+@pytest.mark.parametrize(
+    "table_template",
+    [
+        "apass_source_r{id}",  # the runner's own naming
+        "apass_source_archive_r{id}",  # a partition that does not follow it
+    ],
+)
+def test_remove_release_drops_the_partition_and_cascades(imported, table_template):
+    """The detach/drop/delete path, which the refusal test returns before.
+
+    The second parametrisation pins where the parent name comes from.
+    ``remove_release`` used to rebuild it as ``tbl.rsplit("_r", 1)[0]``, which
+    yields the nonexistent ``apass_source_archive`` here and leaves the
+    partition attached; the parent is read from ``pg_inherits`` instead, in the
+    query that already tests attachment.
+    """
+    name = f"TEST-REMOVE-{table_template}"
+    release_id, partition = _register_removable_release(imported, name, table_template)
+    try:
+        report = remove_release(imported, "apass", name)
+        assert report["production_table"] == f"catalog_data.{partition}"
+
+        eng = _reader(imported)
+        with eng.connect() as conn:
+            assert (
+                conn.execute(
+                    text("SELECT to_regclass(:t)"),
+                    {"t": f'catalog_data."{partition}"'},
+                ).scalar()
+                is None
+            ), "the partition survived remove_release"
+            assert (
+                conn.execute(
+                    text("SELECT count(*) FROM catalog_registry.catalog_release WHERE id=:i"),
+                    {"i": release_id},
+                ).scalar()
+                == 0
+            )
+            # ON DELETE CASCADE on ingestion_run.release_id: a removed release
+            # must not leave orphaned run rows behind.
+            assert (
+                conn.execute(
+                    text("SELECT count(*) FROM catalog_registry.ingestion_run WHERE release_id=:i"),
+                    {"i": release_id},
+                ).scalar()
+                == 0
+            )
+        eng.dispose()
+    finally:
+        _forget_removable_release(imported, release_id, partition)
 
 
 def test_idempotent_reimport_skips(imported):

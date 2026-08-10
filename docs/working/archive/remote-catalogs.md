@@ -1,42 +1,45 @@
 ---
-status: open
+status: archived
 reviewed: 2026-08-07
+archived: 2026-08-09
+deprecated: 2026-08-09
 branch: docs/catalog-coverage-split
 authority: service documentation (CDS/SIMBAD, IPAC/NED, CfA/ADS, astroquery) + code inspection (skycat @ 2c36084, skynet @ 0040c28ab, afterglow-core @ 92aaf61)
-implementation: not-started
-document-type: research survey — inputs for a future design, not a design
+implementation: abandoned
+document-type: deprecated research survey - historical context only
 ---
 
-# Remotely queried catalog services — VizieR, SIMBAD, NED, ADS
+# Remote catalog services — how to define and serve providers
 
-**What this document is.** A survey of the astronomical data services Skycat
-would have to query live rather than mirror: what each one is, what question it
-answers, how it is accessed, what it costs operationally, and whether Skycat
-should support it. It also inventories the three places the Skynet/Afterglow
-codebase already talks to these services, because how that has gone before is the
-best available evidence about how it will go again.
+> **Deprecated (2026-08-09).** Skycat will not add remote catalog support. This
+> note is archived as historical research only; do not use it as implementation
+> guidance. Supported catalog families should be implemented as local
+> PostgreSQL/PostGIS-backed catalogs.
 
-**What this document is not.** It is not a design or an architecture decision
-record. It proposes no classes, signatures, module layouts or phases. Where it
-states a requirement, it is because the survey turned up a constraint — an
-existing contract, a service limit, a failure mode already observed in production
-— that any design will have to answer. A design agent should be able to read this
-plus [local-catalogs.md](local-catalogs.md) and have the material to plan the
-work.
+**What this document was.** A survey of the astronomical data services Skycat
+would query through a remote catalog surface: what each one is, what question it
+answers, how it is accessed, how a remote provider is defined, what it costs
+operationally, and whether Skycat should support it. The framing assumption is
+now obsolete: remote catalogs are no longer a Skycat implementation track.
 
-**Companion:** [local-catalogs.md](local-catalogs.md) surveys the sources that
-*can* be mirrored, sizes them against a 4 TB budget, and says where to download
-them. The two documents divide the same landscape along one line: **does the
-provider distribute bulk files, and is the volume worth the disk?**
+**What this document is not.** It is not current design guidance and should not
+drive classes, signatures, module layouts or phases. The active catalog planning
+document is [local-catalogs.md](../local-catalogs.md).
 
-## The one position that is not open
+**Current direction:** [local-catalogs.md](../local-catalogs.md) surveys the
+sources that can be mirrored, sizes them against a 12 TB budget, and says where
+to download them. Catalog support in Skycat means local PostgreSQL/PostGIS
+support, not live remote service queries.
 
-**`CatalogReader` stays strictly local PostgreSQL/PostGIS, and any remote access
-lives in a separate, adjacent surface** — working name `RemoteCatalogReader`. Not
-a mode, not a fallback, not a flag on the existing class.
+## Former position from the abandoned plan
 
-The reasoning, because everything below assumes it.
-[Decision 0001](../decisions/0001-postgresql-postgis-only.md)'s argument against a
+The former plan said **`CatalogReader` stays strictly local PostgreSQL/PostGIS,
+and any remote access lives in a separate, adjacent surface** — working name
+`RemoteCatalogReader`. That adjacent remote surface is no longer planned. The
+local-only `CatalogReader` constraint still stands.
+
+The former reasoning, because the archived analysis below assumes it:
+[Decision 0001](../../decisions/0001-postgresql-postgis-only.md)'s argument against a
 Python-side query fallback is about failure semantics rather than mathematics:
 *the path taken when the fast one is unavailable is the path taken during an
 incident, on an unfamiliar deployment, by whoever is on call; a slow,
@@ -44,24 +47,33 @@ subtly-different query path is worse than a clear failure to connect, because th
 failure gets diagnosed and the wrong answer does not.* That applies with more
 force to a network path, which adds third-party availability and rate limiting on
 top. A separate class with a different name, a different dependency set and no
-release vocabulary is not a fallback — it is a different question asked
-deliberately. §4 lists the contracts that keeps intact.
+release vocabulary was not presented as a fallback — it was presented as a
+different question asked deliberately. §4 lists the contracts that boundary was
+meant to keep intact.
 
 ---
 
 ## 1. Four systems, four questions
 
-| System | Operator | Question it answers | Returns | Access | Auth | Support? |
+| System | Operator | Question it answers | Returns | Access | Auth | Former support verdict |
 |---|---|---|---|---|---|---|
-| **VizieR** | CDS, Strasbourg | *What sources are in this region of sky, in catalog X?* | Table rows | HTTP POST to `viz-bin/votable`; TAP/ADQL via `TAPVizieR` | None | ✅ Yes — for the catalogs [local-catalogs.md](local-catalogs.md) defers |
+| **VizieR** | CDS, Strasbourg | *What sources are in this region of sky, in catalog X?* | Table rows | HTTP POST to `viz-bin/votable`; TAP/ADQL via `TAPVizieR` | None | ✅ Yes — primary remote catalog row service |
 | **SIMBAD** | CDS, Strasbourg | *Where is the thing called "M31"? What kind of object is it?* | One object: identifiers, object type, basic data, bibcodes | TAP/ADQL | None | ✅ **Yes — highest value.** No local substitute exists |
 | **NED** | IPAC, Caltech | *What is this galaxy's redshift? What else is this object called?* | One extragalactic object: cross-IDs, redshift, photometry | New IVOA TAP API; legacy CGI APIs deprecated | None | ⚠️ Conditional — only if the pipeline does extragalactic work |
 | **ADS** | CfA, Harvard | *What has been published about this?* | Papers | REST API | **API token required** | ❌ Not as a catalog surface. Narrow provenance use at most |
 
 The structural point, and the reason this document exists separately from its
-companion: **only VizieR distributes bulk files.** SIMBAD, NED and ADS publish no
-dump — their product is curation across the literature, which is a living process
-rather than a snapshot. A mirrored SIMBAD would be stale the day it landed.
+companion: **only VizieR distributes bulk files among these four systems.**
+SIMBAD, NED and ADS publish no dump — their product is curation across the
+literature, which is a living process rather than a snapshot. A mirrored SIMBAD
+would be stale the day it landed.
+
+The remote catalog surface is a separate product surface. A remote catalog is
+defined by a service, an upstream designation or table, requested columns,
+coordinate mapping, identifier mapping, photometric band mapping, filters, sort
+order, limits and operational policy. None of those are inherited from a local
+release. If a remote provider shares a name with a local family, the remote
+provider still uses the remote service's own identity and behaviour.
 
 **These are not four sources of the same thing.** VizieR answers a spatial
 question about catalog rows, which is what Skycat already does locally. The other
@@ -79,28 +91,57 @@ between them matters more than the overlap:
 
 ## 2. The services
 
-### 2.1 VizieR — the catalogs Skycat will not mirror
+### 2.1 VizieR — remote catalog row provider
 
 **What it is.** The CDS catalog service: an archive and query interface over
 roughly 50,000 published astronomical catalogs and tables. It is simultaneously a
-bulk distribution channel — covered in [local-catalogs.md](local-catalogs.md)
+bulk distribution channel — covered in [local-catalogs.md](../local-catalogs.md)
 §3.1 — and a query service. This section is the query side.
 
-**What Skycat would use it for.** The catalogs the local survey deferred, on
-evidence, because they cannot be rebuilt inside 4 TB or are not worth the disk:
+**What Skycat would use it for.** Serving remote catalog providers. That includes
+predefined providers with stable names, operator-defined providers created from a
+validated declaration, and one-off queries against arbitrary VizieR designations.
+Some predefined remote providers share names with local catalog families, but the
+remote provider is still defined entirely by the remote service. Example: remote
+`APASS` is VizieR's APASS9 catalog (`II/336/apass9`), not Skycat's local DR6 or
+DR10 releases.
 
-| Catalog | Designation | Rows | Why remote |
+**How a remote VizieR catalog is created.** The legacy code establishes the
+minimum declaration shape. A future remote catalog definition needs at least:
+
+| Field | Purpose |
+|---|---|
+| Stable key and display name | User-facing catalog selection, independent of any local family registry |
+| Service type | `vizier`, `sdss`, or another remote backend |
+| Upstream designation/table | VizieR ID such as `II/349`, or a service-specific table/query target |
+| Requested columns | Columns to ask the service for; derived from mappings rather than `SELECT *` |
+| Coordinate mapping | How RA/Dec are read and converted to degrees |
+| Native identifier mapping | How a remote row becomes a stable result identifier |
+| Magnitude mappings | Band name, magnitude column, error column and sentinel/null rules |
+| Extra columns | Non-standard values to keep without forcing a typed local schema |
+| Sort and row limit | Remote-side cap and ordering, with documented mismatch from SQL ordering |
+| Constraint translation | Which caller filters can be expressed safely in the remote service language |
+| Operational policy | Server/mirror, timeout, retry, cache behaviour and result provenance label |
+
+**Remote catalog definitions already evidenced by the codebase.** These are
+remote catalog candidates because the legacy provider layer or public API already
+serves, or tried to serve, them remotely. The "creation note" is about the remote
+definition, not a local mirror plan.
+
+| Remote catalog | Backend | Upstream target | Creation / access note |
 |---|---|---|---|
-| Pan-STARRS DR2 | `II/349` | 1.92 B | ~1.15 TB; cannot be rebuilt in 4 TB. ATLAS-RefCat2 already carries PS1-derived griz all-sky to m<19 |
-| Gaia DR3 main | `I/355/gaiadr3` | 1.81 B | ~1.10 TB; cannot be rebuilt in 4 TB. GSPC is the photometrically useful subset |
-| NOMAD | `I/297` | 1.12 B | ~450 GB of a *compilation* whose components are better mirrored individually |
-| USNO-B1.0 | `I/284` | 1.05 B | ~420 GB of photographic-plate photometry; fits, but not worth it |
-| SDSS DR17 | — | ~1.2 B | A SQL-region service with a survey footprint; structurally not a mirroring candidate |
-| The long tail | ~50,000 others | — | A one-off comparison against an arbitrary designation, with no family added |
-
-That last row is the capability local mirroring structurally cannot match. A
-local family costs six touch points, a parser, a table and a migration; a remote
-query against an arbitrary designation costs a designation string.
+| APASS | VizieR | `II/336` / APASS9 | Define as the VizieR APASS9 provider; expose the remote release identity explicitly |
+| Pan-STARRS | VizieR | `II/349` | Standard VizieR provider with grizy mappings and remote sort on `rmag` |
+| SDSS | SQL-region service | service-specific | Non-VizieR provider; keep separate backend type rather than forcing it into VizieR shape |
+| SkyMapper | VizieR | `II/358/smss` | VizieR provider; current designation/release needs refresh before freezing the definition |
+| Landolt | VizieR | `II/183A` | VizieR provider with colour-index handling; Landolt 2009 target remains open |
+| Stetson | VizieR | `J/MNRAS/485/3042/table4` | VizieR provider with UBVRI mappings |
+| 2MASS | VizieR | `II/246` | VizieR provider with JHK and legacy colour transformations |
+| Tycho-2 | VizieR | `I/259` | VizieR provider with BT/VT mappings and formatted Tycho identifier |
+| UCAC5 | VizieR | `I/340` | VizieR provider with open/G/R/J/H/K mappings |
+| USNO-B1.0 | VizieR | `I/284` | VizieR provider with photographic B/R mappings |
+| VSX | VizieR | `B/vsx/vsx` | Remote variable-star provider; should be marked as exclusion/metadata, not a calibration source |
+| NOMAD | VizieR | `I/297` | Demonstrated by the upstream custom-catalog example, but that example is malformed and must become a schema validation failure |
 
 **Access mechanisms, and there are two.**
 
@@ -108,7 +149,7 @@ query against an arbitrary designation costs a designation string.
 |---|---|---|
 | Used by | The legacy plugins (§3.1) | `TAPVizieR`, reachable through `pyvo` (already an astroquery dependency) |
 | Query language | Form parameters plus a filter mini-language | ADQL |
-| Batch / upload joins | None | Possibly — unverified, open item 3 |
+| Batch / upload joins | None | Possibly — unverified, open item 4 |
 
 Whether TAP offers upload joins good enough to change the crossmatch picture
 (§4.3) is the single most consequential unknown about this service.
@@ -122,13 +163,16 @@ Whether TAP offers upload joins good enough to change the crossmatch picture
   `vizier.cfa.harvard.edu`. Which one a query reaches is a third axis of "which
   data did I get", after catalog and release — and §3.4 shows the existing code
   does not actually know which one it uses.
-- **The release-identity problem is concrete.** VizieR serves APASS **DR9** as
-  `II/336/apass9`. Skycat serves DR6 and DR10. AAVSO states DR10 "cannot be
-  automatically queried" and distributes it directly. The overlap is empty, on
-  the largest and most-used family. Verified 2026-08-07. §4.2.
+- **Remote catalog identity must be explicit.** VizieR serves APASS **DR9** as
+  `II/336/apass9`. AAVSO states DR10 "cannot be automatically queried" and
+  distributes it directly. A remote catalog named `APASS` therefore needs to say
+  which upstream product it queries rather than relying on the human-readable
+  name alone. Verified 2026-08-07. §4.2.
 
-**Verdict: support.** It is the only one of the four that returns catalog rows,
-and there is a defined, evidence-backed set of catalogs for it to serve.
+**Verdict: support.** It is the only one of the four named services that returns
+catalog rows, and it can serve both named remote catalog providers and arbitrary
+VizieR designations. The first implementation question is not which local
+catalogs exist; it is which remote provider declarations Skycat ships.
 
 ### 2.2 SIMBAD — name and object resolution
 
@@ -146,12 +190,11 @@ galactic and stellar in emphasis.
 | Bibliographic references | 466,020 |
 | Object citations in papers | 53,873,557 |
 
-**What it gives that no local mirror can.** Name resolution. Skycat's `lookup()`
-takes a `native_id` within one family — "the APASS source whose id is X". SIMBAD
-answers "where is the thing called M31", across 72.5 million identifiers spanning
-every naming convention in the literature. That is a fundamentally different
-operation, it has no local analogue, and it does not become mirrorable with more
-disk: the value *is* the ongoing curation.
+**What it gives.** Name resolution. A catalog-row lookup takes a `native_id`
+within one remote provider — "the APASS source whose id is X". SIMBAD answers
+"where is the thing called M31", across 72.5 million identifiers spanning every
+naming convention in the literature. That is a fundamentally different
+operation from a catalog row query: the value *is* the ongoing curation.
 
 **Access.** TAP/ADQL. `astroquery.simbad` was **rewritten onto SIMBAD's TAP
 interface in astroquery 0.4.8**, which is a hard version boundary:
@@ -219,7 +262,7 @@ Photometry from GALEX, 2MASS and AllWISE has been joined in.
 **If that inference is right, `astroquery.ipac.ned` is already blind to anything
 NED ingested after January 2026, silently.** Confirming which endpoint the module
 calls is the first thing anyone should do before designing around it (open item
-2). This is the §3.9 signature again: a remote path that returns *something*,
+3). This is the §3.9 signature again: a remote path that returns *something*,
 just not the right something, and raises nothing.
 
 - **Stated volume limits.** NED documents that its "ability to support automated
@@ -229,12 +272,12 @@ just not the right something, and raises nothing.
 
 **Bulk availability: none in general.** One exception — the Local Volume Sample
 (NED-LVS), a curated table rather than a service query, surveyed in
-[local-catalogs.md](local-catalogs.md) §3.6.
+[local-catalogs.md](../local-catalogs.md) §3.6.
 
 **Verdict: conditional.** Genuinely valuable *if* the pipeline does extragalactic
 work; otherwise it is a second name resolver that mostly disagrees with the first
-one. Needs a consumer to state a requirement (open item 6), and the endpoint
-question (open item 2) needs answering before any design work, because it may
+one. Needs a consumer to state a requirement (open item 7), and the endpoint
+question (open item 3) needs answering before any design work, because it may
 mean the obvious library is the wrong one.
 
 ### 2.4 ADS — the literature database
@@ -258,7 +301,7 @@ putting one behind a catalog reader would be a category error — the surface wo
 share nothing with the other three services except the word "remote".
 
 **The one narrow role that does make sense: provenance verification.**
-[guides/provenance.md](../guides/provenance.md) names a specific hazard — CDS
+[guides/provenance.md](../../guides/provenance.md) names a specific hazard — CDS
 occasionally supersedes a catalog with a new designation (`II/183` → `II/183A`),
 and a silently-different upstream is exactly what the provenance chain exists to
 prevent. Every `FamilyDef` carries a `reference_url`, and most catalogs have a
@@ -276,7 +319,7 @@ uses it. That is real cost for a lint.
 
 **Verdict: not as a catalog surface. At most an optional provenance check, and
 only after establishing that VizieR's own metadata cannot do the same job without
-a credential** (open item 5).
+a credential** (open item 6).
 
 ---
 
@@ -400,7 +443,7 @@ Two observations for a designer:
    `models/landolt.py` stores V plus five colour indices and explicitly does not
    store U/B/R/I, because the remote provider derives them at query time and the
    local provider reproduces that derivation in normalization — in the consumer.
-   That boundary is deliberate. [local-catalogs.md](local-catalogs.md) §3.4 notes
+   That boundary is deliberate. [local-catalogs.md](../local-catalogs.md) §3.4 notes
    that Gaia GSPC makes it cheaper to hold, by supplying *measured* Johnson
    magnitudes instead of derived ones.
 
@@ -574,10 +617,11 @@ tables = Vizier.query_region(center_coord, catalog="APASS9",
 that almost certainly returns empty results, and nothing surfaced it, because an
 empty cone is a legitimate answer.
 
-### 3.8 The local-first router — already built, downstream
+### 3.8 Consumer-side routing is out of scope
 
-The routing a remote surface might otherwise propose has already been built in
-`skynet-db`, as a `LocalFirstCatalog` mixin in front of the VizieR providers:
+The downstream pipeline has experimented with routing between local and remote
+providers in `skynet-db`, as a `LocalFirstCatalog` mixin in front of the VizieR
+providers:
 
 ```
 provider.query_*  →  LocalFirstCatalog._route:
@@ -592,14 +636,14 @@ with modes `local_first` / `local_only` / `remote_only`, plus
 `SKYCAT_REMOTE_FALLBACK`, `SKYCAT_FALLBACK_ON_EMPTY`, `SKYCAT_LOCAL_FAMILIES` and
 per-family release pins.
 
-**This is the right place for it**: it is where `CatalogSource`/`mags` — the
-shape routing normalises into — actually lives. Moving it into Skycat would
-invert the dependency. Skycat's job is to provide good *ends* to route between,
-not the switch.
+That is consumer behaviour, not remote catalog provider behaviour. The remote
+catalog work should expose a clear remote provider surface and leave selection,
+fallback and local-vs-remote policy to the consumer that owns those workflows.
 
 *Currency caveat:* that code is not in the current `skynet` working tree.
 `catalogs/local/` holds only stale `__pycache__`; the sources live on unmerged
-branches. Confirm before treating it as shipped (open item 1).
+branches. Treat it as historical context unless the downstream branch state is
+confirmed separately.
 
 ### 3.9 What the inventory establishes
 
@@ -626,24 +670,22 @@ branches. Confirm before treating it as shipped (open item 1).
 Not solutions — the existing contracts and service realities a design has to
 answer to.
 
-### 4.1 Skycat's current contracts
+### 4.1 Boundary contracts
 
-- **The row shape is typed columns, not bands.** `cone_search` returns
-  `dict(row)` over the release's real columns — `native_id, ra_deg, dec_deg,
-  johnson_v_mag, …, extra, separation_deg`. No `mags` dict, no `ra_hours`, no
-  `CatalogSource`. Column names carry units.
-  [api-stability.md](../reference/api-stability.md) permits adding keys but not
-  repurposing them.
+- **Do not repurpose the local row shape accidentally.** `cone_search` returns
+  `dict(row)` over a local release's real columns — `native_id, ra_deg, dec_deg,
+  johnson_v_mag, …, extra, separation_deg`. A remote surface can choose a
+  separate result shape, but if it reuses any public Skycat keys then
+  [api-stability.md](../../reference/api-stability.md) permits adding keys, not
+  changing their meaning.
 - **Spatial work happens in the database, always.** Decision 0001.
-  `separation_deg` comes from `ST_Distance(geom, point, false)`. A remote path
-  necessarily computes that number somewhere else, which means two
-  implementations of one quantity unless something verifies they agree.
-- **Every answer is attributed to a release.** `resolve_release_for_query`
-  returns a `ResolvedRelease` before any query runs, and `--release` exists so
-  results are reproducible. **A remote row has no release**, and both available
-  answers cost something: `None` breaks the attribution invariant, while a
-  synthetic designation is honest about origin but is not a release the registry
-  knows and `--release` cannot select it.
+  `separation_deg` comes from `ST_Distance(geom, point, false)`. A remote
+  surface necessarily computes that number somewhere else, so it should be
+  documented as remote-computed rather than treated as a local database value.
+- **Remote answers need remote origin, not local release identity.**
+  `resolve_release_for_query` and `--release` belong to the local reader. A
+  remote row should instead carry the queried service, upstream designation,
+  server/mirror and any provider-level version label the service exposes.
 - **The dependency set is five libraries** — `sqlalchemy`, `geoalchemy2`,
   `psycopg[binary]`, `alembic`, `click`. No numpy, no astropy. Deliberate, for a
   package whose deployment target is a one-shot Kubernetes Job.
@@ -663,19 +705,22 @@ answer to.
   catalog, which has no local schema to design. That asymmetry deserves an
   explicit decision rather than an assumption either way.
 
-### 4.2 Release identity
+### 4.2 Remote provider identity
 
-| Family | Skycat has | VizieR serves |
+Human-readable catalog names are not enough. A remote provider definition needs
+to identify the upstream service product it queries, because the same short name
+can refer to different upstream releases or living services.
+
+| Remote provider key | Upstream product | Identity note |
 |---|---|---|
-| `apass` | DR6, **DR10** | **DR9** (`II/336/apass9`) — no overlap |
-| `landolt` | **1992**, 2009 | 1992 ✓ (`II/183A`) |
-| `stetson` | stetsonglobs | same ✓ |
-| `vsx` | current | a mirror of a living index — no snapshot identity |
+| `APASS` | VizieR **DR9** (`II/336/apass9`) | The remote name must expose DR9; `APASS` alone is ambiguous |
+| `Landolt` | VizieR `II/183A` | Covers the 1992 standards in the legacy provider |
+| `Stetson` | VizieR `J/MNRAS/485/3042/table4` | Published table, stable designation |
+| `VSX` | VizieR `B/vsx/vsx` | Living index; snapshot identity is weak by nature |
 
-The APASS overlap is **empty**, on the largest and most-used family. Only
-Landolt-1992 and Stetson are cleanly comparable, and both are small standards
-catalogs. Any remote surface has to make it impossible to mistake VizieR's APASS
-DR9 for a local DR10 release.
+The rule generalises: the remote catalog key is a Skycat convenience label, while
+the upstream designation is the data identity. Both need to be visible in results
+and logs.
 
 ### 4.3 Query semantics that do not survive the trip
 
@@ -781,7 +826,7 @@ There is also a verification opportunity worth naming. Skycat's Landolt and
 Stetson parsers claim to reproduce the remote provider's coordinate arithmetic
 exactly (§3.2). Today that is a docstring. Comparing a local release against the
 VizieR catalog it mirrors would make it a test — and each catalog
-[local-catalogs.md](local-catalogs.md) adds locally creates another such pair.
+[local-catalogs.md](../local-catalogs.md) adds locally creates another such pair.
 Tycho-2 in particular becomes comparable once mirrored.
 
 ### 4.10 Configuration namespace collision
@@ -801,82 +846,77 @@ be distinguishable, and the README's configuration table needs to say which
 
 | Service | Verdict | Reasoning |
 |---|---|---|
-| **SIMBAD** | ✅ **Support — highest value** | Name resolution has no local substitute and cannot acquire one; the surface is small and free of release, band-mapping and schema-impedance problems; and the production implementation has seven identified defects a supported one would fix by construction |
-| **VizieR** | ✅ Support | The only service returning catalog rows, with an evidence-backed set of five deferred catalogs plus a ~50,000-catalog long tail. Carries the most constraints (§4.2–§4.5) |
-| **NED** | ⚠️ Conditional | Genuinely valuable for extragalactic work — 8.99 M objects with redshifts — but needs a stated consumer requirement, and the `astroquery.ipac.ned` endpoint question (open item 2) must be answered first |
+| **SIMBAD** | ✅ **Support — highest value** | Name resolution is a distinct remote service with a small surface, no band-mapping problem, and seven identified production defects a supported implementation would fix by construction |
+| **VizieR** | ✅ Support | Primary remote catalog row service. Supports named provider definitions, operator-defined catalogs and the ~50,000-catalog long tail. Carries the most constraints (§4.2–§4.5) |
+| **Other catalog query services** | 🔍 Investigate by provider | SDSS already proves a non-VizieR remote provider shape exists. IRSA, MAST and ESA Gaia Archive should be evaluated as remote catalog backends when a requested remote catalog is better served there than through VizieR |
+| **NED** | ⚠️ Conditional | Genuinely valuable for extragalactic work — 8.99 M objects with redshifts — but needs a stated consumer requirement, and the `astroquery.ipac.ned` endpoint question (open item 3) must be answered first |
 | **ADS** | ❌ Not as a catalog surface | Returns papers, not sources. A narrow provenance-lint role exists but is optional, and it would introduce Skycat's first third-party API credential for a check VizieR metadata may do without one |
 
 Two sequencing observations that fall out of the survey rather than from a plan:
 
-- **The local track should go first**, because "cannot be mirrored" is a
-  measurement and [local-catalogs.md](local-catalogs.md) makes it. Building the
-  remote surface first would bias that measurement: once a catalog is reachable
-  remotely, the pressure to size and mirror it drops to zero, and it stays remote
-  by default rather than by decision. Tycho-2 is the concrete case — it is under
-  a gigabyte locally, so it should never become a remote catalog.
-- **SIMBAD support does not depend on any of that.** It is orthogonal to the
-  mirroring question, useful whatever gets mirrored, and the smallest honest
-  surface to build first.
+- **Define the remote catalog declaration before porting providers.** The legacy
+  code shows that a remote catalog is mostly data, but also that untyped data
+  silently returns empty results (§3.3). Schema validation is the first useful
+  deliverable.
+- **SIMBAD can be sequenced independently.** It is orthogonal to the catalog-row
+  provider work and the smallest honest service surface to build first.
 
 ---
 
 ## 6. Open questions
 
-1. **Branch state of the downstream routing layer.** `catalogs/local/` in
-   `skynet` holds only stale bytecode on `pipeline/analysis-descriptive-split`;
-   the sources live on unmerged branches. Confirm before treating §3.8's router
-   as shipped, and confirm whether `SKYCAT_LOCAL_FAMILIES` in the Compose worker
-   is still pinned to `APASS,VSX`.
-2. **Which NED endpoint does `astroquery.ipac.ned` actually call?** If it is the
+1. **What is the validated remote catalog definition schema?** The minimum field
+   list is in §2.1, but the exact schema has to decide how to represent
+   expressions, band pairs, sentinels, source roles, remote identity and backend
+   type.
+2. **Which predefined remote catalog providers ship first?** The evidenced list
+   is APASS, Pan-STARRS, SDSS, SkyMapper, Landolt, Stetson, 2MASS, Tycho-2,
+   UCAC5, USNO-B1.0, VSX and the broken NOMAD example. Decide which are
+   supported and which are only migration evidence.
+3. **Which NED endpoint does `astroquery.ipac.ned` actually call?** If it is the
    legacy CGI interface, it is already blind to anything NED ingested after
    January 2026 — silently. Answer before designing anything around it.
-3. **Does VizieR TAP offer upload joins?** `TAPVizieR` via `pyvo`. It is the only
+4. **Does VizieR TAP offer upload joins?** `TAPVizieR` via `pyvo`. It is the only
    thing that could change the §4.3 crossmatch verdict.
-4. **Which VizieR server does production actually reach?** `config.py` says
+5. **Which VizieR server does production actually reach?** `config.py` says
    `vizier.cds.unistra.fr`, nothing reads it, and `vizier_server = None` (§3.4);
    Afterglow's default is `vizier.cfa.harvard.edu`. Mirrors can hold different
    snapshots.
-5. **Can VizieR's own metadata calls do ADS's provenance job?**
+6. **Can VizieR's own metadata calls do ADS's provenance job?**
    `find_catalogs()` / `get_catalog_metadata()` need no credential. If they can
    verify a designation has not been superseded, ADS has no role at all.
-6. **Does the pipeline do extragalactic work needing redshifts or host-galaxy
-   data?** Determines whether NED is in scope, and pairs with
-   [local-catalogs.md](local-catalogs.md) open item 9 on NED-LVS.
-7. **Landolt 2009 designation.** `J/AJ/137/4186` is inferred from
+7. **Does the pipeline do extragalactic work needing redshifts or host-galaxy
+   data?** Determines whether NED is in scope as a remote service.
+8. **Landolt 2009 designation.** `J/AJ/137/4186` is inferred from
    `catalog_defs.py`'s description; the legacy plugin only knows `II/183A`.
-   Affects how many comparable local/remote pairs exist for verification.
-8. **astroquery version floor and ceiling.** `>= 0.4.8` is required for the TAP
+   Affects whether Landolt 2009 can be a named remote provider.
+9. **astroquery version floor and ceiling.** `>= 0.4.8` is required for the TAP
    SIMBAD columns. `skynet` pins `==0.4.10` in three requirements files and
    `skylib` declares `~= 0.4.9`; current stable is 0.4.11. Confirm no conflict
    where both are installed.
-9. **Is `CUSTOM_VIZIER_CATALOGS` populated in any deployment?** Afterglow ships it
+10. **Is `CUSTOM_VIZIER_CATALOGS` populated in any deployment?** Afterglow ships it
    defaulting to `[]` and the forks dropped it. If a deployment populates it,
    there are catalog definitions in operator config that exist in no repository —
    and per §3.3, any written in the documented shape are silently returning
    nothing.
-10. **Does anything besides the two public-api routes call SIMBAD?** §3.6 found
+11. **Does anything besides the two public-api routes call SIMBAD?** §3.6 found
     one integration by grep.
-11. **Does the deferred set hold?** It derives from
-    [local-catalogs.md](local-catalogs.md)'s sizing, which is modelled rather
-    than measured. If measured bytes-per-row comes in far above the model,
-    catalogs move from the local plan into this one.
 
 ---
 
 ## 7. References
 
-**Companion** — [local-catalogs.md](local-catalogs.md): the mirrorable sources,
-sized against 4 TB, with download channels. The deferred set in §2.1 is defined
-there.
+**Current direction** — [local-catalogs.md](../local-catalogs.md): the local-only
+catalog survey, sized against 12 TB, with download channels.
 
 **Skycat** — `skycat/client.py`, `skycat/query/cone.py`,
 `skycat/query/crossmatch.py`, `skycat/registry/catalog_defs.py`,
 `skycat/models/{apass,landolt,stetson,vsx}.py`, `skycat/cli/main.py`,
-`pyproject.toml`; [decisions/0001](../decisions/0001-postgresql-postgis-only.md),
-[reference/architecture.md](../reference/architecture.md),
-[reference/api-stability.md](../reference/api-stability.md),
-[guides/provenance.md](../guides/provenance.md),
-[operations/runbook.md](../operations/runbook.md).
+`pyproject.toml`; [decisions/0001](../../decisions/0001-postgresql-postgis-only.md),
+[reference/architecture.md](../../reference/architecture.md),
+[reference/api-stability.md](../../reference/api-stability.md),
+[guides/provenance.md](../../guides/provenance.md),
+[operations/runbook.md](../../operations/runbook.md).
 
 **Skynet** (`pipeline/analysis-descriptive-split` @ `0040c28ab`) —
 `packages/py/skynet-db/skynet_db/runners/observation_asset_processing/optical_data_processing/catalogs/`

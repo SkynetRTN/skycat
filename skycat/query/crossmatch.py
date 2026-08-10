@@ -25,7 +25,12 @@ from ..spatial import (
     is_valid_dec,
     is_valid_ra,
 )
-from .cone import ResolvedRelease, resolve_release_for_query
+from .cone import (
+    CatalogQueryError,
+    ResolvedRelease,
+    resolve_release_for_query,
+    validate_resolved_release_for_query,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +70,11 @@ def batch_crossmatch(
         if resolved is None:
             with Session(engine) as session:
                 resolved = resolve_release_for_query(session, family_slug, release)
+        else:
+            with Session(engine) as session:
+                resolved = validate_resolved_release_for_query(
+                    session, resolved, require_active=release is None
+                )
         table = CatalogBase.metadata.tables[f"{SCHEMA_DATA}.{resolved.data_table}"]
         cat_cols = [c.name for c in table.c if c.name != "geom"]
         inner_cols = ", ".join(f'c."{n}"' for n in cat_cols)
@@ -89,7 +99,17 @@ def batch_crossmatch(
                     "COPY _xm_inputs (input_id, ra_deg, dec_deg) FROM STDIN"
                 ) as cp:
                     for input_id, ra, dec in inputs:
-                        ra_f, dec_f = float(ra), float(dec)
+                        try:
+                            ra_f, dec_f = float(ra), float(dec)
+                        except (TypeError, ValueError) as exc:
+                            # Caller input, so the caller's error type — the same
+                            # promise cone_search makes about an out-of-range
+                            # centre. (Zero-cost until it fires, so streaming a
+                            # hundred million inputs pays nothing for it.)
+                            raise CatalogQueryError(
+                                f"Crossmatch input {input_id!r} has non-numeric "
+                                f"coordinates ({ra!r}, {dec!r})"
+                            ) from exc
                         # Validate BEFORE the COPY: an out-of-range Dec makes the
                         # generated geography cast fail at COPY time and aborts the
                         # entire batch transaction (opaque driver error, all

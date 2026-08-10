@@ -102,19 +102,23 @@ def remove_release(
         with engine.begin() as conn:
             if prod:
                 schema, _, tbl = prod.partition(".")
-                attached = conn.execute(
+                # The same query answers both "is it attached?" and "to what?".
+                # Reconstructing the parent as tbl.rsplit("_r", 1)[0] happened to
+                # be right for every partition the runner names, and silently
+                # wrong — DETACH against a table that does not exist — for any
+                # partition that does not follow that convention.
+                # regclass renders (and quotes) the name for this session.
+                parent = conn.execute(
                     text(
-                        "SELECT 1 FROM pg_inherits i JOIN pg_class c ON c.oid=i.inhrelid "
+                        "SELECT i.inhparent::regclass::text "
+                        "FROM pg_inherits i JOIN pg_class c ON c.oid=i.inhrelid "
                         "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=:s AND c.relname=:t"
                     ),
                     {"s": schema, "t": tbl},
                 ).scalar()
-                if attached:
-                    family_def_table = tbl.rsplit("_r", 1)[0]
+                if parent:
                     conn.execute(
-                        text(
-                            f'ALTER TABLE {schema}."{family_def_table}" DETACH PARTITION {schema}."{tbl}"'
-                        )
+                        text(f'ALTER TABLE {parent} DETACH PARTITION {schema}."{tbl}"')
                     )
                 conn.execute(text(f'DROP TABLE IF EXISTS {schema}."{tbl}"'))
         with Session(engine) as session:

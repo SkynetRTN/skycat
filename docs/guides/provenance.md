@@ -108,7 +108,11 @@ match what you expected.
 
 ## What a release records
 
-Every import stamps the `catalog_registry.catalog_release` row:
+Every *successful* import stamps the `catalog_registry.catalog_release` row —
+and only a successful one. Each column below is written after the partition swap
+has succeeded, so the row always describes the rows actually on disk. A failed
+`--replace` leaves all of them at their previous values rather than claiming a
+tree it never loaded:
 
 | Column | Meaning |
 |---|---|
@@ -130,6 +134,12 @@ The matching `ingestion_run` row adds the host it ran on, the stage it reached,
 and `detail.malformed_examples` — the first 20 lines the parser could not read
 at all. Those examples are frequently the fastest way to identify a source that
 is a different format than expected.
+
+The run row is also where an *attempt's* provenance lives: `detail` carries the
+source location, checksum, checksum mode and byte count the run was reading,
+written when the run starts. That is the only record of what a failed import was
+pointed at, since the release row deliberately stays with the partition it
+already has.
 
 The three counts are a provenance statement in themselves:
 `parsed = imported + rejected` should hold, and `imported` well below

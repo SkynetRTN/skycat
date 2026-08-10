@@ -18,7 +18,7 @@ release id.
 
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Double, Integer, Sequence, String
+from sqlalchemy import BigInteger, Double, Index, Integer, Sequence, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,10 +33,22 @@ class ApassSource(CatalogBase):
     """A single APASS source row (release-partitioned)."""
 
     __tablename__ = "apass_source"
-    __table_args__ = {
-        "schema": SCHEMA_DATA,
-        "postgresql_partition_by": "LIST (release_id)",
-    }
+    # The parent's indexes, declared here because the metadata has to describe
+    # the migrated schema — an index that lives only in a migration is one that
+    # `alembic revision --autogenerate` proposes dropping. They are *created* by
+    # `migrations/versions/0002_apass.py`, not from here (the parent is raw DDL:
+    # Alembic's table builder cannot express PARTITION BY or a GENERATED
+    # geography column), so the names must match that migration exactly.
+    # Indexes on the parent are what every partition gets: the runner replicates
+    # each non-PK parent index onto the detached build before ATTACH.
+    __table_args__ = (
+        Index("ix_apass_source_geom", "geom", postgresql_using="gist"),
+        Index("ix_apass_source_native_id", "native_id"),
+        {
+            "schema": SCHEMA_DATA,
+            "postgresql_partition_by": "LIST (release_id)",
+        },
+    )
 
     # Composite PK includes the partition key (PostgreSQL requirement).
     release_id: Mapped[int] = mapped_column(Integer, primary_key=True, nullable=False)

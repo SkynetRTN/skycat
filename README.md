@@ -55,13 +55,13 @@ From the GitHub Release wheel:
 
 ```bash
 python -m pip install \
-  https://github.com/SkynetRTN/skycat/releases/download/v0.1.5/skycat-0.1.5-py3-none-any.whl
+  https://github.com/SkynetRTN/skycat/releases/download/v0.1.6/skycat-0.1.6-py3-none-any.whl
 ```
 
 From a Git tag:
 
 ```bash
-python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.5"
+python -m pip install "git+https://github.com/SkynetRTN/skycat.git@v0.1.6"
 ```
 
 See
@@ -134,7 +134,10 @@ skycat lookup apass 090-0000001
 ## Python API
 
 Use `CatalogReader` for application reads. It owns connection pooling, active
-release caching, and a default statement timeout.
+release caching, and a default statement timeout. Query calls re-check a cached
+release against the registry before using it, so a release removed, failed, or
+deactivated behind a long-lived reader raises `CatalogQueryError` instead of
+looking like an empty cone.
 
 ```python
 from skycat import CatalogReader
@@ -171,6 +174,11 @@ Imports stage rows, validate them, build production partitions, mark releases
 ready, and activate only when explicitly requested. A failed import should not
 degrade the currently active release.
 
+Re-running `skycat import <family> <release> --activate` is idempotent for an
+unchanged imported release: if it is already ACTIVE the command exits 0, and if
+it is READY or SUPERSEDED the command activates it when the validation gate
+allows activation.
+
 The full architecture is documented in
 [docs/reference/architecture.md](https://github.com/SkynetRTN/skycat/blob/main/docs/reference/architecture.md),
 and source data provenance is covered in
@@ -179,7 +187,7 @@ and source data provenance is covered in
 ## Configuration
 
 Skycat uses `SKYCAT_DB_*` for database settings and `SKYCAT_*` for catalog
-runtime paths.
+runtime paths and diagnostics.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -193,13 +201,16 @@ runtime paths.
 | `SKYCAT_DB_POOL_RECYCLE` / `SKYCAT_DB_POOL_TIMEOUT` | `300` / `30` | Pool recycle and checkout timing. |
 | `SKYCAT_DB_POOL_PRE_PING` | `true` | Detect stale pooled connections. |
 | `SKYCAT_DB_ECHO` | `false` | SQL echo logging. |
-| `SKYCAT_DB_STATEMENT_TIMEOUT` | unset | Per-connection statement timeout in milliseconds. |
+| `SKYCAT_DB_STATEMENT_TIMEOUT` | unset | Reader/default statement timeout in milliseconds. Does not apply to ingest, admin, or bootstrap connections. |
+| `SKYCAT_DB_{BOOTSTRAP,ADMIN,INGEST,READER}_STATEMENT_TIMEOUT` | unset | Role-specific statement timeout override in milliseconds. |
+| `SKYCAT_DB_LOCK_TIMEOUT` | `5000` | Phase B2 import swap lock timeout in milliseconds; each retry waits at most this long for the family parent. |
 | `SKYCAT_DB_BOOTSTRAP_USER` / `SKYCAT_DB_BOOTSTRAP_PASSWORD` | unset | DBA/bootstrap identity for `init`. |
 | `SKYCAT_DB_ADMIN_USER` / `SKYCAT_DB_ADMIN_PASSWORD` | unset | Owner/migrator identity. |
 | `SKYCAT_DB_INGEST_USER` / `SKYCAT_DB_INGEST_PASSWORD` | unset | Bulk-ingestion identity. |
 | `SKYCAT_DB_READER_USER` / `SKYCAT_DB_READER_PASSWORD` | unset | Read-only role managed by `init`. |
 | `SKYCAT_DATA_ROOT` | `/srv/agents/catalogs` | Read-only catalog source root. |
 | `SKYCAT_WORK_ROOT` | `/tmp/skycat-work` | Writable work area for manifests, rejects, and checkpoints. |
+| `SKYCAT_DEBUG` | unset | Diagnosis only: suppress the CLI's friendly error messages entirely, so the original exception and its traceback reach the interpreter. Leave it unset in Jobs and services — with it set, an error is a stack trace instead of a message. |
 
 ## Testing
 

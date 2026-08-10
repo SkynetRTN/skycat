@@ -1,9 +1,8 @@
 """CatalogReader facade (marker: postgis).
 
-The two behaviours the facade exists to add — active-release TTL caching and a
-default statement timeout — are proven here rather than asserted at: registry
-round trips are counted off the engine, and the timeout is read back from the
-session.
+The facade caches active-release lookups and applies a default statement
+timeout. Query calls still re-check a cached release handle before trusting it,
+so a stale cache cannot look like an empty scientific result.
 """
 
 from __future__ import annotations
@@ -12,9 +11,14 @@ from contextlib import contextmanager
 
 import pytest
 from sqlalchemy import event
+from sqlalchemy.orm import Session
 
+from skycat.config import CatalogRole
+from skycat.constants import CatalogReleaseState
 from skycat.client import DEFAULT_STATEMENT_TIMEOUT_MS, CatalogReader
-from skycat.query import CatalogQueryError, cone_search
+from skycat.database.engine import create_catalog_engine
+from skycat.query import CatalogQueryError, ResolvedRelease, cone_search
+from skycat.registry import activate_release, deactivate_release, resolve_release
 
 pytestmark = pytest.mark.postgis
 
@@ -41,6 +45,35 @@ def registry_queries(engine):
 def reader(imported):
     with CatalogReader(imported) as r:
         yield r
+
+
+def _mutate_release(settings, family: str, name: str, action) -> None:
+    engine = create_catalog_engine(
+        settings.config_for(CatalogRole.INGEST), pool_size=1, max_overflow=0
+    )
+    try:
+        with Session(engine) as session:
+            release = resolve_release(session, family, name)
+            assert release is not None
+            action(session, release)
+            session.commit()
+    finally:
+        engine.dispose()
+
+
+def _activate(settings, family: str, name: str) -> None:
+    _mutate_release(settings, family, name, activate_release)
+
+
+def _deactivate(settings, family: str, name: str) -> None:
+    _mutate_release(settings, family, name, deactivate_release)
+
+
+def _set_state(settings, family: str, name: str, state: CatalogReleaseState) -> None:
+    def action(_session, release):
+        release.state = state.value
+
+    _mutate_release(settings, family, name, action)
 
 
 def test_cone_matches_the_module_function(reader, imported):
@@ -83,12 +116,12 @@ def test_crossmatch_and_lookup(reader):
 
 
 # ----------------------------------------------------------------- TTL cache --
-def test_active_release_is_cached_off_the_hot_path(reader):
-    reader.cone("apass", *CENTER, radius_deg=0.5, limit=1)  # warm the cache
+def test_active_release_lookup_is_cached(reader):
+    reader.active_release("apass")  # warm the cache
     with registry_queries(reader.engine) as seen:
         for _ in range(3):
-            reader.cone("apass", *CENTER, radius_deg=0.5, limit=1)
-    assert seen == [], "cached reader still resolved the release from the registry"
+            reader.active_release("apass")
+    assert seen == [], "cached active_release() still resolved from the registry"
 
 
 def test_zero_ttl_resolves_every_call(imported):
@@ -135,6 +168,34 @@ def test_explicit_release_bypasses_the_cache(reader):
 def test_unknown_family_raises(reader):
     with pytest.raises(CatalogQueryError, match="Unknown family"):
         reader.active_release("nosuch")
+
+
+def test_ghost_resolved_release_raises(imported):
+    ghost = ResolvedRelease("apass", "apass_source", 999_999_999, "ghost", "active")
+    with pytest.raises(CatalogQueryError, match="no longer exists"):
+        cone_search(imported, "apass", *CENTER, radius_deg=0.5, resolved=ghost)
+
+
+def test_explicit_failed_release_is_rejected(imported):
+    _activate(imported, "apass", "DR10")
+    _set_state(imported, "apass", "DR6", CatalogReleaseState.FAILED)
+    try:
+        with pytest.raises(CatalogQueryError, match="not queryable"):
+            cone_search(imported, "apass", 0.000236, 1.886943, radius_deg=0.1, release="DR6")
+    finally:
+        _set_state(imported, "apass", "DR6", CatalogReleaseState.SUPERSEDED)
+
+
+def test_cached_active_release_is_rechecked(reader, imported):
+    _activate(imported, "apass", "DR10")
+    reader.active_release("apass")
+    _deactivate(imported, "apass", "DR10")
+    try:
+        with pytest.raises(CatalogQueryError, match="no longer active"):
+            reader.cone("apass", *CENTER, radius_deg=0.5)
+    finally:
+        _activate(imported, "apass", "DR10")
+        reader.invalidate("apass")
 
 
 # --------------------------------------------------------- statement timeout --

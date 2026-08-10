@@ -29,6 +29,7 @@ from .constants import (
 )
 
 ENV_PREFIX = "SKYCAT_DB_"
+DEFAULT_IMPORT_LOCK_TIMEOUT_MS = 5_000
 
 
 def _env(suffix: str, default: str | None = None) -> str | None:
@@ -72,6 +73,7 @@ class CatalogDatabaseConfig:
     pool_pre_ping: bool = True
     echo: bool = False
     statement_timeout_ms: int | None = None
+    lock_timeout_ms: int | None = DEFAULT_IMPORT_LOCK_TIMEOUT_MS
 
     # ------------------------------------------------------------------ URL ---
     def url(self, *, hide_password: bool = False) -> str:
@@ -79,7 +81,8 @@ class CatalogDatabaseConfig:
 
         ``sslmode`` is passed as a libpq query parameter (psycopg honours it).
         ``statement_timeout`` is applied per-connection by the engine, not in
-        the URL, so it works uniformly across drivers.
+        the URL, so it works uniformly across drivers. ``lock_timeout`` is kept
+        off the engine and applied only to the short ingestion swap transaction.
         """
         password = "***" if hide_password else quote(self.password)
         base = "{backend}://{user}:{password}@{host}:{port}/{name}".format(
@@ -162,6 +165,15 @@ class CatalogSettings:
     data_root: str
     work_root: str
 
+    # Per-role statement timeouts. ``None`` means "use the role default" rather
+    # than "inherit the generic timeout": the generic env var is reader-facing
+    # for backward compatibility, while ingest/admin/bootstrap stay unbounded
+    # unless an explicit role variable says otherwise.
+    bootstrap_statement_timeout_ms: int | None = None
+    admin_statement_timeout_ms: int | None = None
+    ingest_statement_timeout_ms: int | None = None
+    reader_statement_timeout_ms: int | None = None
+
     # ------------------------------------------------------------------ env ---
     @classmethod
     def from_env(cls) -> "CatalogSettings":
@@ -180,6 +192,7 @@ class CatalogSettings:
             pool_pre_ping=_bool(_env("POOL_PRE_PING"), True),
             echo=_bool(_env("ECHO"), False),
             statement_timeout_ms=_opt_int(_env("STATEMENT_TIMEOUT")),
+            lock_timeout_ms=_int(_env("LOCK_TIMEOUT"), DEFAULT_IMPORT_LOCK_TIMEOUT_MS),
         )
         default_user = base.user
         default_password = base.password
@@ -197,6 +210,10 @@ class CatalogSettings:
             reader_password=_env("READER_PASSWORD", "") or "",
             data_root=os.environ.get("SKYCAT_DATA_ROOT", "/srv/agents/catalogs"),
             work_root=os.environ.get("SKYCAT_WORK_ROOT", "/tmp/skycat-work"),
+            bootstrap_statement_timeout_ms=_opt_int(_env("BOOTSTRAP_STATEMENT_TIMEOUT")),
+            admin_statement_timeout_ms=_opt_int(_env("ADMIN_STATEMENT_TIMEOUT")),
+            ingest_statement_timeout_ms=_opt_int(_env("INGEST_STATEMENT_TIMEOUT")),
+            reader_statement_timeout_ms=_opt_int(_env("READER_STATEMENT_TIMEOUT")),
         )
 
     # --------------------------------------------------------------- roles ---
@@ -215,11 +232,28 @@ class CatalogSettings:
             user, password = self.default_user, self.default_password
         return user, password
 
+    def _statement_timeout_for(self, role: CatalogRole) -> int | None:
+        role_timeout = {
+            CatalogRole.BOOTSTRAP: self.bootstrap_statement_timeout_ms,
+            CatalogRole.ADMIN: self.admin_statement_timeout_ms,
+            CatalogRole.INGEST: self.ingest_statement_timeout_ms,
+            CatalogRole.READER: self.reader_statement_timeout_ms,
+            CatalogRole.DEFAULT: self.reader_statement_timeout_ms,
+        }[role]
+        if role_timeout is not None:
+            return role_timeout
+        if role in (CatalogRole.READER, CatalogRole.DEFAULT):
+            return self.base.statement_timeout_ms
+        return None
+
     def config_for(
         self, role: CatalogRole = CatalogRole.DEFAULT
     ) -> CatalogDatabaseConfig:
         user, password = self._creds_for(role)
-        return self.base.with_credentials(user, password)
+        return replace(
+            self.base.with_credentials(user, password),
+            statement_timeout_ms=self._statement_timeout_for(role),
+        )
 
 
 def load_settings() -> CatalogSettings:
